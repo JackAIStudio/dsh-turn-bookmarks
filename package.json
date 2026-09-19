@@ -1,0 +1,43 @@
+{
+  "name": "dsh-turn-bookmarks",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DSH 会话轮次收藏与对话内检索：原生 Turn Rail 深度增强，清晰轮次序号、星标收藏、金色高亮、会话内全文搜索与轮次速达",
+  "type": "module",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.zh.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "sessions",
+        "locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "turn",
+    "bookmarks",
+    "search",
+    "rail"
+  ],
+  "license": "MIT"
+}
