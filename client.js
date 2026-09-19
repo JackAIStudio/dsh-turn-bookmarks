@@ -35,6 +35,18 @@ html.dark [class*="_preview"] {
   border-color: rgba(255, 255, 255, 0.14) !important;
 }
 
+/* Seamless mouse bridge between 28px rail and preview card */
+[class*="_frame"]:has([class*="_preview"]):before {
+  content: "" !important;
+  position: absolute !important;
+  top: -20px !important;
+  bottom: -20px !important;
+  right: 0 !important;
+  left: -350px !important;
+  pointer-events: auto !important;
+  z-index: 2 !important;
+}
+
 .dsh-tb-card-header {
   display: flex !important;
   align-items: center !important;
@@ -90,6 +102,36 @@ html.dark [class*="_preview"] {
 }
 
 .dsh-tb-card-btn.dsh-tb-starred svg {
+  fill: #f59e0b !important;
+  stroke: #d97706 !important;
+}
+
+/* In-message turn bookmark star button */
+.dsh-tb-msg-star {
+  width: calc(28px + var(--dsh-content-font-delta, 0px)) !important;
+  height: calc(28px + var(--dsh-content-font-delta, 0px)) !important;
+  color: var(--dsw-alias-label-tertiary, #9ca3af) !important;
+  cursor: pointer !important;
+  background: transparent !important;
+  border: none !important;
+  border-radius: 28px !important;
+  justify-content: center !important;
+  align-items: center !important;
+  padding: 6px !important;
+  display: inline-flex !important;
+  transition: all 0.15s ease !important;
+}
+
+.dsh-tb-msg-star:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.12)) !important;
+  color: #f59e0b !important;
+}
+
+.dsh-tb-msg-star.dsh-tb-starred {
+  color: #f59e0b !important;
+}
+
+.dsh-tb-msg-star.dsh-tb-starred svg {
   fill: #f59e0b !important;
   stroke: #d97706 !important;
 }
@@ -154,7 +196,7 @@ html.dark [class*="_preview"] {
 
 /* ==================== 3. Top Floating Control Bar ==================== */
 .dsh-tb-bar {
-  position: absolute;
+  position: fixed;
   top: 10px;
   right: 18px;
   z-index: 100;
@@ -243,7 +285,7 @@ html.dark .dsh-tb-btn.active {
 }
 
 .dsh-tb-search-wrap.expanded {
-  max-width: 240px;
+  max-width: 260px;
 }
 
 .dsh-tb-input {
@@ -372,6 +414,14 @@ html.dark .dsh-tb-btn.active {
       let currentMatchIdx = 0
       let searchExpanded = false
 
+      let barEl = null
+      let filterBtnEl = null
+      let filterSpanEl = null
+      let searchToggleEl = null
+      let searchWrapEl = null
+      let searchInputEl = null
+      let counterEl = null
+
       function reloadBookmarks() {
         activeSessionId = getSessionIdFromEnvironment(sessionsRef)
         const all = getStoredBookmarks()
@@ -395,7 +445,7 @@ html.dark .dsh-tb-btn.active {
                   m[activeSessionId] = [...starredTurns].sort((a, b) => a - b)
                   saveStoredBookmarks(m)
                   updateRailMarks()
-                  updateControlBar()
+                  renderControlBarState()
                 }
               }
             })
@@ -405,6 +455,7 @@ html.dark .dsh-tb-btn.active {
 
       function toggleBookmark(turn) {
         if (!Number.isSafeInteger(turn)) return
+        console.info('[dsh-turn-bookmarks] toggleBookmark turn:', turn, 'activeSessionId:', activeSessionId)
         if (starredTurns.has(turn)) {
           starredTurns.delete(turn)
         } else {
@@ -425,8 +476,55 @@ html.dark .dsh-tb-btn.active {
         }).catch(() => {})
 
         updateRailMarks()
-        updateControlBar()
+        renderControlBarState()
         enhancePreviewCard()
+        injectMessageStarButtons()
+      }
+
+      // ── In-Message Star Action Buttons ────────────────────────────────────
+      function injectMessageStarButtons() {
+        const rows = document.querySelectorAll('[data-chat-turn]')
+        for (const row of rows) {
+          const turn = parseInt(row.dataset.chatTurn || '', 10)
+          if (!Number.isSafeInteger(turn)) continue
+          const actionsBar = row.querySelector('[class*="_actions"], [class*="actions"]')
+          if (!actionsBar) continue
+
+          let starBtn = actionsBar.querySelector('.dsh-tb-msg-star')
+          const isStarred = starredTurns.has(turn)
+          if (starBtn) {
+            const currentStarState = starBtn.classList.contains('dsh-tb-starred')
+            if (currentStarState === isStarred) continue
+            starBtn.classList.toggle('dsh-tb-starred', isStarred)
+            starBtn.title = isStarred ? `取消收藏第 ${turn} 轮` : `收藏第 ${turn} 轮`
+            starBtn.innerHTML = `
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="${isStarred ? '#f59e0b' : 'none'}" stroke="${isStarred ? '#d97706' : 'currentColor'}" stroke-width="1.8" stroke-linejoin="round">
+                <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+              </svg>
+            `
+            continue
+          }
+
+          starBtn = document.createElement('button')
+          starBtn.className = 'dsh-tb-msg-star'
+          starBtn.type = 'button'
+          starBtn.title = isStarred ? `取消收藏第 ${turn} 轮` : `收藏第 ${turn} 轮`
+          starBtn.setAttribute('aria-label', starBtn.title)
+          starBtn.classList.toggle('dsh-tb-starred', isStarred)
+          starBtn.innerHTML = `
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="${isStarred ? '#f59e0b' : 'none'}" stroke="${isStarred ? '#d97706' : 'currentColor'}" stroke-width="1.8" stroke-linejoin="round">
+              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+            </svg>
+          `
+          const onToggle = (e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            toggleBookmark(turn)
+          }
+          starBtn.addEventListener('click', onToggle, { capture: true })
+          starBtn.addEventListener('pointerdown', onToggle, { capture: true })
+          actionsBar.appendChild(starBtn)
+        }
       }
 
       // ── Rail Marks Synchronizer ───────────────────────────────────────────
@@ -448,6 +546,23 @@ html.dark .dsh-tb-btn.active {
           btn.dataset.dshTurn = String(turn)
           const pos = btn.closest('[class*="markPosition"]')
           if (pos) pos.dataset.dshTurn = String(turn)
+
+          // Bind click with shift/alt on mark to quick star/unstar!
+          if (!btn.dataset.dshTbBound) {
+            btn.dataset.dshTbBound = '1'
+            btn.addEventListener('click', (e) => {
+              if (e.shiftKey || e.altKey) {
+                e.stopPropagation()
+                e.preventDefault()
+                toggleBookmark(turn)
+              }
+            }, { capture: true })
+            btn.addEventListener('dblclick', (e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              toggleBookmark(turn)
+            }, { capture: true })
+          }
 
           // 1. Starred status
           if (starredTurns.has(turn)) {
@@ -484,13 +599,18 @@ html.dark .dsh-tb-btn.active {
         let cardHeader = preview.querySelector('.dsh-tb-card-header')
         // Find which turn is currently previewed
         let currentTurn = null
-        const promptEl = preview.querySelector('[class*="previewPrompt"]')
-        const hoveredMark = document.querySelector('button[class*="mark"]:hover, [class*="markPosition"]:hover button')
-        if (hoveredMark) {
-          currentTurn = parseTurnNumber(hoveredMark)
-        } else if (promptEl) {
-          const m = (promptEl.textContent || '').match(/第\s*(\d+)\s*轮/) || (promptEl.textContent || '').match(/turn\s*(\d+)/i)
-          if (m) currentTurn = parseInt(m[1], 10)
+        const activeMark = document.querySelector('button[class*="mark"][aria-describedby]') ||
+                           document.querySelector('button[class*="mark"]:hover, [class*="markPosition"]:hover button')
+        if (activeMark) {
+          currentTurn = parseTurnNumber(activeMark)
+        } else if (cardHeader && cardHeader.dataset.dshCardTurn) {
+          currentTurn = parseInt(cardHeader.dataset.dshCardTurn, 10)
+        } else {
+          const promptEl = preview.querySelector('[class*="previewPrompt"]')
+          if (promptEl) {
+            const m = (promptEl.textContent || '').match(/第\s*(\d+)\s*轮/) || (promptEl.textContent || '').match(/turn\s*(\d+)/i)
+            if (m) currentTurn = parseInt(m[1], 10)
+          }
         }
 
         if (currentTurn === null) return
@@ -501,7 +621,21 @@ html.dark .dsh-tb-btn.active {
           preview.insertBefore(cardHeader, preview.firstChild)
         }
 
+        preview.onmouseenter = () => {
+          activeMark?.focus()
+        }
+        preview.onmouseleave = () => {
+          activeMark?.blur()
+        }
+
         const isStarred = starredTurns.has(currentTurn)
+
+        // Only update if turn changed or star state changed to prevent DOM thrashing
+        if (cardHeader.dataset.dshCardTurn === String(currentTurn) && cardHeader.dataset.dshStarred === String(isStarred)) {
+          return
+        }
+        cardHeader.dataset.dshCardTurn = String(currentTurn)
+        cardHeader.dataset.dshStarred = String(isStarred)
 
         cardHeader.innerHTML = `
           <span class="dsh-tb-turn-pill">
@@ -519,7 +653,7 @@ html.dark .dsh-tb-btn.active {
               <span>${isStarred ? '已收藏' : '收藏'}</span>
             </button>
             <button class="dsh-tb-card-btn dsh-tb-copy-toggle" title="复制问答正文">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
               </svg>
@@ -531,7 +665,8 @@ html.dark .dsh-tb-btn.active {
         const starBtn = cardHeader.querySelector('.dsh-tb-star-toggle')
         starBtn.onclick = (e) => {
           e.stopPropagation()
-          toggleBookmark(currentTurn)
+          const turn = parseInt(cardHeader.dataset.dshCardTurn, 10)
+          if (Number.isSafeInteger(turn)) toggleBookmark(turn)
         }
 
         const copyBtn = cardHeader.querySelector('.dsh-tb-copy-toggle')
@@ -557,7 +692,7 @@ html.dark .dsh-tb-btn.active {
           searchMatches = []
           currentMatchIdx = 0
           updateRailMarks()
-          updateControlBar()
+          renderControlBarState()
           return
         }
 
@@ -593,15 +728,14 @@ html.dark .dsh-tb-btn.active {
             .then((r) => r.json())
             .then((res) => {
               if (res.ok && Array.isArray(res.matches)) {
-                // If backend matched anything, we notify or keep results
-                updateControlBar()
+                renderControlBarState()
               }
             })
             .catch(() => {})
         }
 
         updateRailMarks()
-        updateControlBar()
+        renderControlBarState()
       }
 
       function jumpToCurrentMatch() {
@@ -628,7 +762,7 @@ html.dark .dsh-tb-btn.active {
         }, 120)
 
         updateRailMarks()
-        updateControlBar()
+        renderControlBarState()
       }
 
       function nextMatch() {
@@ -643,114 +777,183 @@ html.dark .dsh-tb-btn.active {
         jumpToCurrentMatch()
       }
 
-      // ── Top Control Bar ───────────────────────────────────────────────────
-      function updateControlBar() {
-        let bar = document.querySelector('.dsh-tb-bar')
-        if (!bar) {
-          const parent = document.querySelector('[class*="scroll"], [data-chat-flow]')?.parentElement || document.body
-          bar = document.createElement('div')
-          bar.className = 'dsh-tb-bar'
-          parent.appendChild(bar)
+      // ── Create Control Bar DOM Once ───────────────────────────────────────
+      function ensureControlBar() {
+        // Clean up any stale duplicate bars
+        const existingBars = document.querySelectorAll('.dsh-tb-bar')
+        if (existingBars.length > 1) {
+          for (let i = 1; i < existingBars.length; i++) existingBars[i].remove()
         }
 
-        const starCount = starredTurns.size
-        const starBtnHtml = `
-          <button class="dsh-tb-btn dsh-tb-filter-btn ${filterOnlyStarred ? 'active' : ''}" title="${filterOnlyStarred ? '显示所有轮次' : '仅看已收藏轮次'}">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="${filterOnlyStarred ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-            </svg>
-            <span>收藏${starCount > 0 ? ` (${starCount})` : ''}</span>
-          </button>
+        if (barEl && document.body.contains(barEl)) return barEl
+
+        barEl = document.createElement('div')
+        barEl.className = 'dsh-tb-bar'
+
+        // 1. Filter Button
+        filterBtnEl = document.createElement('button')
+        filterBtnEl.className = 'dsh-tb-btn dsh-tb-filter-btn'
+        filterBtnEl.title = '仅看已收藏轮次'
+        filterBtnEl.innerHTML = `
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round">
+            <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+          </svg>
+          <span>收藏</span>
         `
-
-        let matchCounterText = ''
-        if (searchQuery) {
-          matchCounterText = searchMatches.length > 0
-            ? `${currentMatchIdx + 1}/${searchMatches.length} 轮`
-            : '无匹配'
-        }
-
-        bar.innerHTML = `
-          ${starBtnHtml}
-          <div class="dsh-tb-divider"></div>
-          <button class="dsh-tb-btn dsh-tb-search-toggle ${searchExpanded ? 'active' : ''}" title="搜索本会话内容 (快捷键 / 或 Cmd+F)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-              <circle cx="11" cy="11" r="8"></circle>
-              <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-            </svg>
-            <span>${searchExpanded ? '' : '搜索'}</span>
-          </button>
-          <div class="dsh-tb-search-wrap ${searchExpanded ? 'expanded' : ''}">
-            <input class="dsh-tb-input" type="text" placeholder="搜索本会话..." value="${searchQuery}" />
-            ${searchQuery ? `<span class="dsh-tb-counter">${matchCounterText}</span>` : ''}
-            <button class="dsh-tb-nav-btn dsh-tb-prev-btn" title="上一个匹配项 (Shift+Enter)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
-            </button>
-            <button class="dsh-tb-nav-btn dsh-tb-next-btn" title="下一个匹配项 (Enter)">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
-            </button>
-            <button class="dsh-tb-nav-btn dsh-tb-close-btn" title="关闭搜索 (Esc)">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-            </button>
-          </div>
-        `
-
-        // Bind events
-        const filterBtn = bar.querySelector('.dsh-tb-filter-btn')
-        filterBtn.onclick = () => {
+        filterSpanEl = filterBtnEl.querySelector('span')
+        filterBtnEl.onclick = () => {
           filterOnlyStarred = !filterOnlyStarred
           updateRailMarks()
-          updateControlBar()
+          renderControlBarState()
         }
+        barEl.appendChild(filterBtnEl)
 
-        const searchToggle = bar.querySelector('.dsh-tb-search-toggle')
-        const searchInput = bar.querySelector('.dsh-tb-input')
-        searchToggle.onclick = () => {
+        // 1.5 Quick star current turn button
+        const starCurrentBtn = document.createElement('button')
+        starCurrentBtn.className = 'dsh-tb-btn dsh-tb-star-current'
+        starCurrentBtn.title = '收藏/取消收藏当前阅读轮次'
+        starCurrentBtn.innerHTML = `
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="12" y1="5" x2="12" y2="19"></line>
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+          <span>收藏本轮</span>
+        `
+        starCurrentBtn.onclick = () => {
+          const activeMark = document.querySelector('button[class*="mark"][aria-current="true"]')
+          let turn = activeMark ? parseTurnNumber(activeMark) : null
+          if (turn === null) {
+            const rows = Array.from(document.querySelectorAll('[data-chat-turn]'))
+            const lastRow = rows[rows.length - 1]
+            if (lastRow) turn = parseInt(lastRow.dataset.chatTurn || '', 10)
+          }
+          if (Number.isSafeInteger(turn)) toggleBookmark(turn)
+        }
+        barEl.appendChild(starCurrentBtn)
+
+        // Divider
+        const div = document.createElement('div')
+        div.className = 'dsh-tb-divider'
+        barEl.appendChild(div)
+
+        // 2. Search Toggle Button
+        searchToggleEl = document.createElement('button')
+        searchToggleEl.className = 'dsh-tb-btn dsh-tb-search-toggle'
+        searchToggleEl.title = '搜索本会话内容 (快捷键 / 或 Cmd+F)'
+        searchToggleEl.innerHTML = `
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <span>搜索</span>
+        `
+        searchToggleEl.onclick = () => {
           searchExpanded = !searchExpanded
-          updateControlBar()
+          renderControlBarState()
           if (searchExpanded) {
-            setTimeout(() => {
-              const inp = bar.querySelector('.dsh-tb-input')
-              inp?.focus()
-            }, 60)
+            setTimeout(() => searchInputEl?.focus(), 60)
           } else {
             searchQuery = ''
             executeSearch('')
           }
         }
+        barEl.appendChild(searchToggleEl)
 
-        if (searchInput) {
-          searchInput.oninput = (e) => {
-            executeSearch(e.target.value)
-          }
-          searchInput.onkeydown = (e) => {
-            if (e.key === 'Enter') {
-              if (e.shiftKey) prevMatch()
-              else nextMatch()
-            } else if (e.key === 'Escape') {
-              searchExpanded = false
-              searchQuery = ''
-              executeSearch('')
-            }
+        // 3. Search Wrap
+        searchWrapEl = document.createElement('div')
+        searchWrapEl.className = 'dsh-tb-search-wrap'
+
+        searchInputEl = document.createElement('input')
+        searchInputEl.className = 'dsh-tb-input'
+        searchInputEl.type = 'text'
+        searchInputEl.placeholder = '搜索本会话...'
+        searchInputEl.oninput = (e) => executeSearch(e.target.value)
+        searchInputEl.onkeydown = (e) => {
+          if (e.key === 'Enter') {
+            if (e.shiftKey) prevMatch()
+            else nextMatch()
+          } else if (e.key === 'Escape') {
+            searchExpanded = false
+            searchQuery = ''
+            executeSearch('')
           }
         }
+        searchWrapEl.appendChild(searchInputEl)
 
-        const prevBtn = bar.querySelector('.dsh-tb-prev-btn')
-        if (prevBtn) prevBtn.onclick = prevMatch
+        counterEl = document.createElement('span')
+        counterEl.className = 'dsh-tb-counter'
+        searchWrapEl.appendChild(counterEl)
 
-        const nextBtn = bar.querySelector('.dsh-tb-next-btn')
-        if (nextBtn) nextBtn.onclick = nextMatch
+        const prevBtn = document.createElement('button')
+        prevBtn.className = 'dsh-tb-nav-btn'
+        prevBtn.title = '上一个匹配项 (Shift+Enter)'
+        prevBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="18 15 12 9 6 15"></polyline></svg>'
+        prevBtn.onclick = prevMatch
+        searchWrapEl.appendChild(prevBtn)
 
-        const closeBtn = bar.querySelector('.dsh-tb-close-btn')
-        if (closeBtn) closeBtn.onclick = () => {
+        const nextBtn = document.createElement('button')
+        nextBtn.className = 'dsh-tb-nav-btn'
+        nextBtn.title = '下一个匹配项 (Enter)'
+        nextBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'
+        nextBtn.onclick = nextMatch
+        searchWrapEl.appendChild(nextBtn)
+
+        const closeBtn = document.createElement('button')
+        closeBtn.className = 'dsh-tb-nav-btn'
+        closeBtn.title = '关闭搜索 (Esc)'
+        closeBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
+        closeBtn.onclick = () => {
           searchExpanded = false
           searchQuery = ''
           executeSearch('')
+        }
+        searchWrapEl.appendChild(closeBtn)
+
+        barEl.appendChild(searchWrapEl)
+        document.body.appendChild(barEl)
+
+        renderControlBarState()
+        return barEl
+      }
+
+      // ── Update State without destroying DOM ────────────────────────────────
+      function renderControlBarState() {
+        if (!barEl) ensureControlBar()
+        if (!filterBtnEl) return
+
+        // 1. Star button
+        const count = starredTurns.size
+        filterBtnEl.classList.toggle('active', filterOnlyStarred)
+        if (filterSpanEl) {
+          filterSpanEl.textContent = `收藏${count > 0 ? ` (${count})` : ''}`
+        }
+        filterBtnEl.title = filterOnlyStarred ? '显示所有轮次' : '仅看已收藏轮次'
+
+        // 2. Search expanded
+        searchToggleEl?.classList.toggle('active', searchExpanded)
+        searchWrapEl?.classList.toggle('expanded', searchExpanded)
+        if (searchToggleEl) {
+          const span = searchToggleEl.querySelector('span')
+          if (span) span.textContent = searchExpanded ? '' : '搜索'
+        }
+
+        // 3. Counter text
+        if (counterEl) {
+          if (searchQuery) {
+            counterEl.textContent = searchMatches.length > 0
+              ? `${currentMatchIdx + 1}/${searchMatches.length} 轮`
+              : '无匹配'
+            counterEl.style.display = 'inline'
+          } else {
+            counterEl.textContent = ''
+            counterEl.style.display = 'none'
+          }
         }
       }
 
       // ── Main Loop & Sync Interval ─────────────────────────────────────────
       reloadBookmarks()
+      ensureControlBar()
 
       let loopTimer = null
       function tick() {
@@ -761,19 +964,35 @@ html.dark .dsh-tb-btn.active {
           searchQuery = ''
           searchMatches = []
           currentMatchIdx = 0
+          renderControlBarState()
         }
         updateRailMarks()
         enhancePreviewCard()
-        updateControlBar()
+        injectMessageStarButtons()
+        renderControlBarState()
       }
 
-      loopTimer = setInterval(tick, 350)
+      loopTimer = setInterval(tick, 500)
       tick()
 
-      // Watch DOM mutations to snap preview enhancements instantly
+      let enhanceTimer = null
+      const runEnhance = () => {
+        if (observer) observer.disconnect()
+        try {
+          updateRailMarks()
+          enhancePreviewCard()
+          injectMessageStarButtons()
+        } finally {
+          if (observer) observer.observe(document.body, { childList: true, subtree: true })
+        }
+      }
+
       const observer = new MutationObserver(() => {
-        updateRailMarks()
-        enhancePreviewCard()
+        if (enhanceTimer) return
+        enhanceTimer = setTimeout(() => {
+          enhanceTimer = null
+          runEnhance()
+        }, 150)
       })
       observer.observe(document.body, { childList: true, subtree: true })
 
@@ -781,7 +1000,7 @@ html.dark .dsh-tb-btn.active {
         if (loopTimer) clearInterval(loopTimer)
         observer.disconnect()
         document.getElementById(CSS_ID)?.remove()
-        document.querySelector('.dsh-tb-bar')?.remove()
+        barEl?.remove()
       }
     }
 
