@@ -16,7 +16,9 @@ window.__ModuleLoader__.load({
 
     const STYLES = `
 /* ==================== 1. Native Preview Card Enhancement ==================== */
-[class*="_preview"] {
+[role="tooltip"]:has([class*="previewPrompt"]),
+nav[aria-label*="轮次"] [role="tooltip"],
+nav[aria-label*="turn" i] [role="tooltip"] {
   pointer-events: auto !important; /* Allow mouse interaction with card buttons */
   overflow: visible !important;
   max-height: none !important;
@@ -28,23 +30,11 @@ window.__ModuleLoader__.load({
   z-index: 1000 !important;
 }
 
-[data-ds-dark-theme] [class*="_preview"],
-[data-theme="dark"] [class*="_preview"],
-html.dark [class*="_preview"] {
+[data-ds-dark-theme] [role="tooltip"]:has([class*="previewPrompt"]),
+[data-theme="dark"] [role="tooltip"]:has([class*="previewPrompt"]),
+html.dark [role="tooltip"]:has([class*="previewPrompt"]) {
   background: #1e2430 !important;
   border-color: rgba(255, 255, 255, 0.14) !important;
-}
-
-/* Seamless mouse bridge between 28px rail and preview card */
-[class*="_frame"]:has([class*="_preview"]):before {
-  content: "" !important;
-  position: absolute !important;
-  top: -20px !important;
-  bottom: -20px !important;
-  right: 0 !important;
-  left: -350px !important;
-  pointer-events: auto !important;
-  z-index: 2 !important;
 }
 
 .dsh-tb-card-header {
