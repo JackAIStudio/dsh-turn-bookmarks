@@ -184,33 +184,31 @@ html.dark [role="tooltip"]:has([class*="previewPrompt"]) {
   opacity: 0.1 !important;
 }
 
-/* ==================== 3. Top Floating Control Bar ==================== */
+/* ==================== 3. Header Action Control Bar ==================== */
 .dsh-tb-bar {
-  position: fixed;
-  top: 10px;
-  right: 18px;
-  z-index: 100;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--dsw-alias-surface-overlay, #ffffff);
-  border: 1px solid var(--dsw-alias-border-l4, rgba(128, 128, 128, 0.22));
-  border-radius: 8px;
-  padding: 3px 6px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  user-select: none;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  transition: box-shadow 0.15s ease;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  background: var(--dsw-alias-surface-overlay, #ffffff) !important;
+  border: 1px solid var(--dsw-alias-border-l4, rgba(128, 128, 128, 0.22)) !important;
+  border-radius: 8px !important;
+  padding: 2px 6px !important;
+  margin-right: 8px !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  user-select: none !important;
+  flex: none !important;
+  position: relative !important;
+  z-index: 10 !important;
+  box-shadow: none !important;
+  transition: box-shadow 0.15s ease !important;
 }
 
 [data-ds-dark-theme] .dsh-tb-bar,
 [data-theme="dark"] .dsh-tb-bar,
 html.dark .dsh-tb-bar {
-  background: rgba(30, 36, 48, 0.92);
-  border-color: rgba(255, 255, 255, 0.15);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  background: rgba(30, 36, 48, 0.92) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  box-shadow: none !important;
 }
 
 .dsh-tb-btn {
@@ -900,10 +898,27 @@ html.dark .dsh-tb-btn.active {
         searchWrapEl.appendChild(closeBtn)
 
         barEl.appendChild(searchWrapEl)
-        document.body.appendChild(barEl)
 
+        mountControlBar()
         renderControlBarState()
         return barEl
+      }
+
+      function mountControlBar() {
+        if (!barEl) return
+        const corner = document.querySelector('[data-conversation-header-corner]')
+        if (corner && corner.parentElement) {
+          if (barEl.nextElementSibling !== corner) {
+            corner.parentElement.insertBefore(barEl, corner)
+          }
+        } else {
+          const header = document.querySelector('header')
+          if (header && !header.contains(barEl)) {
+            header.appendChild(barEl)
+          } else if (!document.body.contains(barEl)) {
+            document.body.appendChild(barEl)
+          }
+        }
       }
 
       // ── Update State without destroying DOM ────────────────────────────────
@@ -956,6 +971,7 @@ html.dark .dsh-tb-btn.active {
           currentMatchIdx = 0
           renderControlBarState()
         }
+        mountControlBar()
         updateRailMarks()
         enhancePreviewCard()
         injectMessageStarButtons()
