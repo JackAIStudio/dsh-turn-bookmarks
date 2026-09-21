@@ -1576,21 +1576,13 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       ensurePopover()
       ensureLeftBookmarkRail()
 
-      // 全局快捷键: 按 / 展开搜索，按 Esc 收起搜索
-      const onGlobalKeyDown = (e) => {
-        if (e.key === 'Escape' && searchExpanded) {
-          searchExpanded = false
-          searchKeyword = ''
-          if (searchInputEl) searchInputEl.value = ''
-          executeSearch('')
-        } else if (e.key === '/' && !searchExpanded && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
-          e.preventDefault()
-          searchExpanded = true
-          renderControlBarState()
-          setTimeout(() => searchInputEl?.focus(), 80)
-        }
-      }
-      window.addEventListener('keydown', onGlobalKeyDown)
+      // 刻意不注册任何全局快捷键。
+      // 历史问题：曾经在 window 上劫持 "/" 展开搜索，并调用 preventDefault()，
+      // 结果（1）抢占了宿主 DSH 保留的斜杠命令/技能触发键，
+      // （2）焦点不在 INPUT/TEXTAREA 时（如 contenteditable 正文）直接打不出 "/"。
+      // 搜索入口一律走鼠标：右上角搜索按钮展开，面板内 × 关闭。
+      // 仅保留搜索框内部的局部按键（Enter / Shift+Enter 跳转、Esc 收起），
+      // 那只在用户已点开搜索框并聚焦其中时生效，不劫持全局键盘。
 
       let loopTimer = null
       function tick() {
@@ -1650,7 +1642,6 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       return () => {
         if (loopTimer) clearInterval(loopTimer)
         observer.disconnect()
-        window.removeEventListener('keydown', onGlobalKeyDown)
         clearHighlights()
         if (popoverCloseTimer) clearTimeout(popoverCloseTimer)
         popoverEl?.remove()
