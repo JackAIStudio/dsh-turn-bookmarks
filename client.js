@@ -626,6 +626,8 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       const sessionsRef = ctx.get('sessions')
       let activeSessionId = getSessionIdFromEnvironment(sessionsRef)
       let starredTurns = new Set()
+      // 本地点星计数器：后端同步返回时用它判断"这次请求飞行期间用户是否又点过星"
+      let bookmarkToggleSeq = 0
       let searchKeyword = ''
       let searchMarkEls = []
       let searchMatches = []
@@ -829,38 +831,47 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       }
 
       function reloadBookmarks() {
-        activeSessionId = getSessionIdFromEnvironment(sessionsRef)
+        // 关键：这次同步绑定"发起请求时"的会话 id。
+        // 旧实现在响应回来时读的是全局 activeSessionId —— 只要用户在这段时间里切换了会话，
+        // 上一个会话的收藏就会被并进并写死到新会话（这正是 25/27/38 串进 session-4927de52 的成因）。
+        const sid = getSessionIdFromEnvironment(sessionsRef)
+        activeSessionId = sid
         const all = getStoredBookmarks()
-        const list = Array.isArray(all[activeSessionId]) ? all[activeSessionId] : []
+        const list = Array.isArray(all[sid]) ? all[sid] : []
         starredTurns = new Set(list)
         // Also sync from backend asynchronously
-        if (activeSessionId && activeSessionId !== 'default') {
-          fetch(`/dsh-turn-bookmarks/bookmarks?sessionId=${encodeURIComponent(activeSessionId)}`)
-            .then((r) => r.json())
-            .then((res) => {
-              if (res.ok && Array.isArray(res.bookmarks)) {
-                let changed = false
-                for (const t of res.bookmarks) {
-                  if (!starredTurns.has(t)) {
-                    starredTurns.add(t)
-                    changed = true
-                  }
-                }
-                if (changed) {
-                  const m = getStoredBookmarks()
-                  m[activeSessionId] = [...starredTurns].sort((a, b) => a - b)
-                  saveStoredBookmarks(m)
-                  updateRailMarks()
-                  renderControlBarState()
-                }
-              }
-            })
-            .catch(() => {})
-        }
+        if (!sid || sid === 'default') return
+        const toggleSeqAtRequest = bookmarkToggleSeq
+        fetch(`/dsh-turn-bookmarks/bookmarks?sessionId=${encodeURIComponent(sid)}`)
+          .then((r) => r.json())
+          .then((res) => {
+            // 会话已经切走：丢弃迟到响应，绝不写进当前会话
+            if (activeSessionId !== sid) return
+            if (!res.ok || !Array.isArray(res.bookmarks)) return
+            const server = res.bookmarks.filter(Number.isSafeInteger).sort((a, b) => a - b)
+            // 请求期间用户点过星 → 只做并集，别冲掉刚点下的那颗；
+            // 否则以服务端为准（顺带清掉此前串会话留下的脏数据）。
+            const next = bookmarkToggleSeq === toggleSeqAtRequest
+              ? server
+              : [...new Set([...server, ...starredTurns])].sort((a, b) => a - b)
+            const current = [...starredTurns].sort((a, b) => a - b)
+            if (next.join(',') === current.join(',')) return
+            starredTurns = new Set(next)
+            const m = getStoredBookmarks()
+            if (next.length === 0) delete m[sid]
+            else m[sid] = next
+            saveStoredBookmarks(m)
+            updateRailMarks()
+            updateLeftBookmarkRail()
+            injectMessageStarButtons()
+            renderControlBarState()
+          })
+          .catch(() => {})
       }
 
       function toggleBookmark(turn) {
         if (!Number.isSafeInteger(turn)) return
+        bookmarkToggleSeq += 1
         console.info('[dsh-turn-bookmarks] toggleBookmark turn:', turn, 'activeSessionId:', activeSessionId)
         if (starredTurns.has(turn)) {
           starredTurns.delete(turn)
