@@ -5,6 +5,9 @@
   "description": "DSH 会话轮次收藏与对话内检索：原生 Turn Rail 深度增强，清晰轮次序号、星标收藏、金色高亮、会话内全文搜索与轮次速达",
   "type": "module",
   "main": "./index.js",
+  "scripts": {
+    "test": "node test/home-paths.test.mjs && node test/legacy-migration.test.mjs && node test/session-scope.test.mjs"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
