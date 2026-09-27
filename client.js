@@ -354,72 +354,80 @@ html.dark .dsh-tb-left-capsule:hover {
   to { opacity: 1; transform: translateY(-50%) scaleX(1.08); }
 }
 
-/* ==================== 5. Header Action Control Bar (默认单图标 + 丝滑展开搜索) ==================== */
+/* ==================== 5. Header Action Control Bar (与 DSH 官方极简调性对齐) ==================== */
 .dsh-tb-search-container {
   display: inline-flex !important;
   align-items: center !important;
   position: relative !important;
-  margin-left: 8px !important;
+  margin-left: 10px !important;
   margin-top: 0 !important;
-  margin-bottom: 0 !important;
-  align-self: center !important;
-  height: 28px !important;
+  margin-bottom: 7px !important; /* 与 tab 文字基线水平居中自然呼应，绝不下坠越过底部蓝线 */
+  align-self: flex-end !important;
+  height: 24px !important;
   z-index: 10 !important;
   user-select: none !important;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
   box-sizing: border-box !important;
-  vertical-align: middle !important;
 }
 
-/* 折叠状态下的微型单图标按钮 (28px 纯图标，不占空间) */
+/* 折叠状态下的微型 Ghost 图标按钮 (无实体突兀背景、无边框、无阴影) */
 .dsh-tb-search-trigger {
-  width: 28px !important;
-  height: 28px !important;
+  width: 24px !important;
+  height: 24px !important;
   padding: 0 !important;
-  border-radius: 7px !important;
-  border: 1px solid var(--dsw-alias-border-l4, rgba(128, 128, 128, 0.22)) !important;
-  background: var(--dsw-alias-surface-overlay, #ffffff) !important;
-  color: var(--dsw-alias-label-secondary, #6e7781) !important;
+  border-radius: 6px !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--dsw-alias-label-tertiary, #8c8c8c) !important;
   cursor: pointer !important;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
-  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04) !important;
+  transition: background-color 0.15s ease, color 0.15s ease !important;
+  box-shadow: none !important;
   box-sizing: border-box !important;
 }
 
 .dsh-tb-search-trigger:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.12)) !important;
-  color: var(--dsw-alias-label-primary, #1f2328) !important;
-  border-color: var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.35)) !important;
-  transform: scale(1.04) !important;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.05)) !important;
+  color: var(--dsw-alias-label-primary, #1e2328) !important;
+  border: none !important;
+  box-shadow: none !important;
+  transform: none !important;
 }
 
 [data-ds-dark-theme] .dsh-tb-search-trigger,
 [data-theme="dark"] .dsh-tb-search-trigger,
 html.dark .dsh-tb-search-trigger {
-  background: rgba(30, 36, 48, 0.92) !important;
-  border-color: rgba(255, 255, 255, 0.16) !important;
-  color: #9ca3af !important;
+  background: transparent !important;
+  border: none !important;
+  color: #94a3b8 !important;
+  box-shadow: none !important;
 }
 
-/* 展开状态的搜索输入面板 (拉伸动画) */
+[data-ds-dark-theme] .dsh-tb-search-trigger:hover,
+[data-theme="dark"] .dsh-tb-search-trigger:hover,
+html.dark .dsh-tb-search-trigger:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #f1f5f9 !important;
+}
+
+/* 展开状态的搜索输入胶囊 (原生现代极简，高度 26px，柔和边框，无刺眼黄框) */
 .dsh-tb-search-expanded {
   display: flex !important;
   align-items: center !important;
-  gap: 5px !important;
-  height: 28px !important;
-  width: 28px !important;
+  gap: 4px !important;
+  height: 26px !important;
+  width: 24px !important;
   overflow: hidden !important;
   opacity: 0 !important;
   pointer-events: none !important;
-  border-radius: 7px !important;
-  border: 1px solid var(--dsw-alias-border-l4, rgba(128, 128, 128, 0.22)) !important;
+  border-radius: 6px !important;
+  border: 1px solid var(--dsw-alias-border-l4, rgba(0, 0, 0, 0.12)) !important;
   background: var(--dsw-alias-surface-overlay, #ffffff) !important;
   padding: 0 !important;
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08) !important;
-  transition: width 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.18s ease, padding 0.22s ease !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease, padding 0.2s ease !important;
   position: absolute !important;
   left: 0 !important;
   top: 50% !important;
@@ -430,30 +438,31 @@ html.dark .dsh-tb-search-trigger {
 .dsh-tb-search-container.is-expanded .dsh-tb-search-trigger {
   opacity: 0 !important;
   pointer-events: none !important;
-  transform: scale(0.8) !important;
+  visibility: hidden !important;
 }
 
 .dsh-tb-search-container.is-expanded .dsh-tb-search-expanded {
-  width: 260px !important;
+  width: 236px !important;
   opacity: 1 !important;
   pointer-events: auto !important;
-  padding: 0 6px 0 8px !important;
-  border-color: #f59e0b !important;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(245, 158, 11, 0.3) !important;
+  padding: 0 5px 0 7px !important;
+  border-color: var(--dsw-alias-state-business-primary, #3b82f6) !important;
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06) !important;
 }
 
 [data-ds-dark-theme] .dsh-tb-search-expanded,
 [data-theme="dark"] .dsh-tb-search-expanded,
 html.dark .dsh-tb-search-expanded {
   background: #1e2430 !important;
-  border-color: rgba(255, 255, 255, 0.18) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
 }
 
 [data-ds-dark-theme] .dsh-tb-search-container.is-expanded .dsh-tb-search-expanded,
 [data-theme="dark"] .dsh-tb-search-container.is-expanded .dsh-tb-search-expanded,
 html.dark .dsh-tb-search-container.is-expanded .dsh-tb-search-expanded {
-  border-color: #fbbf24 !important;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(251, 191, 36, 0.4) !important;
+  border-color: #60a5fa !important;
+  box-shadow: 0 0 0 2px rgba(96, 165, 250, 0.2), 0 4px 14px rgba(0, 0, 0, 0.4) !important;
 }
 
 .dsh-tb-input {
@@ -462,22 +471,25 @@ html.dark .dsh-tb-search-container.is-expanded .dsh-tb-search-expanded {
   color: var(--dsw-alias-label-primary, inherit) !important;
   font-size: 12px !important;
   outline: none !important;
-  width: 125px !important;
-  padding: 2px 2px !important;
+  width: 105px !important;
+  padding: 0 !important;
   flex: 1 !important;
   min-width: 0 !important;
+  font-family: inherit !important;
 }
 
 .dsh-tb-input::placeholder {
   color: var(--dsw-alias-label-tertiary, #9ca3af) !important;
+  font-size: 12px !important;
 }
 
 .dsh-tb-counter {
   font-size: 11px !important;
-  color: var(--dsw-alias-label-tertiary, #6b7280) !important;
-  padding: 0 4px !important;
+  color: var(--dsw-alias-label-tertiary, #64748b) !important;
+  padding: 0 3px !important;
   white-space: nowrap !important;
   flex: none !important;
+  font-variant-numeric: tabular-nums !important;
 }
 
 .dsh-tb-nav-btn {
@@ -490,58 +502,62 @@ html.dark .dsh-tb-search-container.is-expanded .dsh-tb-search-expanded {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
-  color: var(--dsw-alias-label-secondary, #6e7781) !important;
+  color: var(--dsw-alias-label-secondary, #64748b) !important;
   padding: 0 !important;
   flex: none !important;
-  transition: all 0.12s ease !important;
+  transition: background-color 0.12s ease, color 0.12s ease !important;
 }
 
 .dsh-tb-nav-btn:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.15)) !important;
-  color: var(--dsw-alias-label-primary, #111827) !important;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(0, 0, 0, 0.06)) !important;
+  color: var(--dsw-alias-label-primary, #0f172a) !important;
+}
+
+[data-ds-dark-theme] .dsh-tb-nav-btn:hover,
+[data-theme="dark"] .dsh-tb-nav-btn:hover,
+html.dark .dsh-tb-nav-btn:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #f8fafc !important;
 }
 
 /* Flash highlight on jump target message bubble */
 @keyframes dshTbTargetFlash {
-  0% { outline: 3px solid rgba(59, 130, 246, 0.85); background: rgba(59, 130, 246, 0.08); }
-  50% { outline: 3px solid rgba(59, 130, 246, 0.4); }
-  100% { outline: 3px solid transparent; background: transparent; }
+  0% { outline: 2px solid rgba(59, 130, 246, 0.65); background: rgba(59, 130, 246, 0.05); }
+  60% { outline: 2px solid rgba(59, 130, 246, 0.3); }
+  100% { outline: 2px solid transparent; background: transparent; }
 }
 
 .dsh-tb-highlight-target {
-  animation: dshTbTargetFlash 1.6s ease-out !important;
+  animation: dshTbTargetFlash 1.4s ease-out !important;
   border-radius: 8px !important;
 }
 
 /* ==================== 6. In-Session Keyword Highlights ==================== */
 mark.dsh-tb-kw {
-  background: rgba(254, 240, 138, 0.7) !important;
-  color: #1e293b !important;
+  background: rgba(254, 240, 138, 0.65) !important;
+  color: inherit !important;
   border-radius: 3px !important;
   padding: 1px 2px !important;
   margin: 0 !important;
-  box-shadow: 0 0 0 1px rgba(234, 179, 8, 0.45) !important;
   text-decoration: none !important;
-  transition: all 0.15s ease !important;
+  transition: all 0.12s ease !important;
   display: inline !important;
 }
 
 [data-ds-dark-theme] mark.dsh-tb-kw,
 [data-theme="dark"] mark.dsh-tb-kw,
 html.dark mark.dsh-tb-kw {
-  background: rgba(234, 179, 8, 0.38) !important;
+  background: rgba(234, 179, 8, 0.32) !important;
   color: #fef08a !important;
-  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.4) !important;
 }
 
-/* Current focused search match */
+/* Current focused search match: 清晰、稳重、不晃动 */
 mark.dsh-tb-kw.dsh-tb-kw-active {
-  background: #f59e0b !important;
-  color: #000000 !important;
-  font-weight: 700 !important;
-  box-shadow: 0 0 0 2px #d97706, 0 0 14px rgba(245, 158, 11, 0.95) !important;
-  animation: dshTbKwActivePulse 0.9s infinite alternate !important;
-  z-index: 99 !important;
+  background: #fde047 !important;
+  color: #0f172a !important;
+  font-weight: 600 !important;
+  box-shadow: 0 0 0 1.5px #f59e0b, 0 1px 4px rgba(245, 158, 11, 0.35) !important;
+  z-index: 10 !important;
   position: relative !important;
 }
 
@@ -550,7 +566,7 @@ mark.dsh-tb-kw.dsh-tb-kw-active {
 html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
   background: #fbbf24 !important;
   color: #09090b !important;
-  box-shadow: 0 0 0 2px #f59e0b, 0 0 12px rgba(251, 191, 36, 0.9) !important;
+  box-shadow: 0 0 0 1.5px #f59e0b, 0 1px 6px rgba(251, 191, 36, 0.45) !important;
 }
 
 @keyframes dshTbKwActivePulse {
@@ -1144,31 +1160,34 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       }
 
       function getChatScrollContainer() {
+        // 1. 优先使用官方标准的会话滚动视口 [data-conversation-scroll] 或带有 scrollBody 的主滚动容器
+        const official = document.querySelector('[data-conversation-scroll]') ||
+                         document.querySelector('.wSkVaW_scrollBody') ||
+                         document.querySelector('[class*="scrollBody"]')
+        if (official && official.scrollHeight > official.clientHeight) return official
+
+        // 2. 如果官方容器未找到，沿着样本节点逐级向上找有真实溢出滚动的父级
         const sample = document.querySelector('mark.dsh-tb-kw') || document.querySelector('[data-chat-turn]')
         if (sample) {
           let cur = sample.parentElement
           while (cur && cur !== document.body) {
             const style = window.getComputedStyle(cur)
             const overflowY = style.overflowY
-            if ((overflowY === 'auto' || overflowY === 'scroll') && cur.clientHeight > 200) {
+            if ((overflowY === 'auto' || overflowY === 'scroll') && cur.scrollHeight > cur.clientHeight + 10) {
               return cur
             }
             cur = cur.parentElement
           }
         }
-        return document.querySelector('[data-conversation-scroll]') ||
-               document.querySelector('[class*="EvIC1a_scroll"], [class*="_scroll"]') ||
-               document.scrollingElement ||
-               document.documentElement
+        return document.scrollingElement || document.documentElement
       }
 
       function scrollTargetIntoCenter(targetMark) {
         if (!targetMark) return
-        const container = getChatScrollContainer()
 
-        // 1. 如果目标所在的父级存在未展开的 details 或折叠，自动展开
+        // 1. 如果目标所在的父级存在未展开的 details 或隐藏节点，自动展开并触发 beforematch
         let parent = targetMark.parentElement
-        while (parent && parent !== container && parent !== document.body) {
+        while (parent && parent !== document.body) {
           if (parent.tagName === 'DETAILS' && !parent.open) {
             parent.open = true
           }
@@ -1179,30 +1198,39 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           parent = parent.parentElement
         }
 
-        // 2. 原生平滑滚动
+        const container = getChatScrollContainer()
+        if (!container) return
+
+        // 2. 派发微小 wheel 事件解除宿主 useChatReading 的 followingTail 吸底状态
         try {
-          targetMark.scrollIntoView({
-            behavior: 'smooth',
-            block: 'center',
-            inline: 'nearest'
-          })
+          container.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -10 }))
         } catch {}
 
-        // 3. 核心保障：直接根据容器的 scrollTop 矫正，避免被吸底逻辑对抗
-        if (container && container !== document.documentElement) {
-          const cRect = container.getBoundingClientRect()
-          const tRect = targetMark.getBoundingClientRect()
-          const currentRelativeTop = tRect.top - cRect.top
-          const idealRelativeTop = cRect.height / 2
-          const diff = currentRelativeTop - idealRelativeTop
+        // 3. 几何绝对坐标换算（物理坐标不变性）
+        const cRect = container.getBoundingClientRect()
+        const tRect = targetMark.getBoundingClientRect()
+        const markAbsoluteTop = container.scrollTop + (tRect.top - cRect.top)
 
-          if (Math.abs(diff) > 60) {
+        // 偏上居中（约 38% 处），避开顶部搜索框与底部输入区，视野极佳
+        const idealOffset = Math.round(cRect.height * 0.38)
+        const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight)
+        const targetScrollTop = Math.max(0, Math.min(maxScrollTop, markAbsoluteTop - idealOffset))
+
+        // 4. 纯净平滑滚动（单一控制器，彻底杜绝 scrollIntoView 冲突与动画打断）
+        container.scrollTo({
+          top: targetScrollTop,
+          behavior: 'smooth'
+        })
+
+        // 5. 动画后矫正兜底（防止极端重排或跟读冲突）
+        setTimeout(() => {
+          if (Math.abs(container.scrollTop - targetScrollTop) > 60) {
             container.scrollTo({
-              top: Math.max(0, container.scrollTop + diff),
-              behavior: 'smooth'
+              top: targetScrollTop,
+              behavior: 'auto'
             })
           }
-        }
+        }, 180)
       }
 
       function jumpToCurrentMatch(smooth = true) {
@@ -1432,35 +1460,35 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         barEl = document.createElement('div')
         barEl.className = 'dsh-tb-search-container'
 
-        // 1. Search Trigger Button (折叠态单图标按钮，28px)
+        // 1. Search Trigger Button (折叠态轻量 Ghost 图标按钮，融入顶栏)
         searchToggleEl = document.createElement('button')
         searchToggleEl.className = 'dsh-tb-search-trigger'
         searchToggleEl.type = 'button'
-        searchToggleEl.title = '搜索本会话内容 (快捷键 /)'
+        searchToggleEl.title = '搜索会话内容'
         searchToggleEl.innerHTML = `
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7.5"></circle>
+            <line x1="21" y1="21" x2="16.5" y2="16.5"></line>
           </svg>
         `
         searchToggleEl.onclick = () => {
           searchExpanded = true
           renderControlBarState()
-          setTimeout(() => searchInputEl?.focus(), 80)
+          setTimeout(() => searchInputEl?.focus(), 60)
         }
         barEl.appendChild(searchToggleEl)
 
-        // 2. Search Expanded Box (展开面板)
+        // 2. Search Expanded Box (展开搜索胶囊，极简现代调性)
         searchWrapEl = document.createElement('div')
         searchWrapEl.className = 'dsh-tb-search-expanded'
 
-        // 内置放大镜小图标
+        // 内置放大镜小图标 (中性优雅灰)
         const innerIcon = document.createElement('span')
-        innerIcon.style.cssText = 'color: #f59e0b; display: inline-flex; align-items: center; flex: none;'
+        innerIcon.style.cssText = 'color: var(--dsw-alias-label-tertiary, #94a3b8); display: inline-flex; align-items: center; flex: none;'
         innerIcon.innerHTML = `
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="8"></circle>
-            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7.5"></circle>
+            <line x1="21" y1="21" x2="16.5" y2="16.5"></line>
           </svg>
         `
         searchWrapEl.appendChild(innerIcon)
@@ -1468,13 +1496,21 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         searchInputEl = document.createElement('input')
         searchInputEl.className = 'dsh-tb-input'
         searchInputEl.type = 'text'
-        searchInputEl.placeholder = '搜索本会话...'
+        searchInputEl.placeholder = '搜索会话...'
         searchInputEl.oninput = (e) => executeSearch(e.target.value)
         searchInputEl.onkeydown = (e) => {
-          if (e.key === 'Enter') {
+          if (e.key === 'ArrowDown') {
+            e.preventDefault()
+            nextMatch()
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault()
+            prevMatch()
+          } else if (e.key === 'Enter') {
+            e.preventDefault()
             if (e.shiftKey) prevMatch()
             else nextMatch()
           } else if (e.key === 'Escape') {
+            e.preventDefault()
             searchExpanded = false
             searchKeyword = ''
             if (searchInputEl) searchInputEl.value = ''
@@ -1489,22 +1525,22 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
 
         const prevBtn = document.createElement('button')
         prevBtn.className = 'dsh-tb-nav-btn'
-        prevBtn.title = '上一个匹配项 (Shift+Enter)'
-        prevBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="18 15 12 9 6 15"></polyline></svg>'
+        prevBtn.title = '上一个匹配项 (↑ 或 Shift+Enter)'
+        prevBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="18 15 12 9 6 15"></polyline></svg>'
         prevBtn.onclick = prevMatch
         searchWrapEl.appendChild(prevBtn)
 
         const nextBtn = document.createElement('button')
         nextBtn.className = 'dsh-tb-nav-btn'
-        nextBtn.title = '下一个匹配项 (Enter)'
-        nextBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'
+        nextBtn.title = '下一个匹配项 (↓ 或 Enter)'
+        nextBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"></polyline></svg>'
         nextBtn.onclick = nextMatch
         searchWrapEl.appendChild(nextBtn)
 
         const closeBtn = document.createElement('button')
         closeBtn.className = 'dsh-tb-nav-btn'
         closeBtn.title = '关闭搜索 (Esc)'
-        closeBtn.innerHTML = '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
+        closeBtn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>'
         closeBtn.onclick = () => {
           searchExpanded = false
           searchKeyword = ''
