@@ -1,6 +1,6 @@
 {
   "name": "dsh-turn-bookmarks",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "DSH 会话轮次收藏与对话内检索：原生 Turn Rail 深度增强，清晰轮次序号、星标收藏、金色高亮、会话内全文搜索与轮次速达",
   "type": "module",

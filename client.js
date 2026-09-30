@@ -702,9 +702,35 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         return popoverEl
       }
 
+      function getTurnOutlineMap() {
+        const map = new Map()
+        const frame = document.querySelector('nav[aria-label*="轮次"], nav[aria-label*="turn" i], [class*="eGxaPq_frame"]')
+        if (!frame) return map
+        const fiberKey = Object.keys(frame).find((k) => k.startsWith('__reactFiber$'))
+        if (!fiberKey) return map
+        let curr = frame[fiberKey]
+        while (curr) {
+          if (curr.memoizedProps && Array.isArray(curr.memoizedProps.items)) {
+            for (const item of curr.memoizedProps.items) {
+              if (item && Number.isSafeInteger(item.turn)) {
+                map.set(item.turn, {
+                  prompt: item.prompt || '',
+                  response: item.response || '',
+                  kind: item.anchor?.kind || 'unknown'
+                })
+              }
+            }
+            break
+          }
+          curr = curr.return
+        }
+        return map
+      }
+
       function getTurnSummary(turn) {
         let promptText = ''
         let respText = ''
+        let isFromOutline = false
 
         const rows = Array.from(document.querySelectorAll(`[data-chat-turn="${turn}"]`))
         for (const row of rows) {
@@ -723,12 +749,27 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           promptText = (rows[0].textContent || '').trim().slice(0, 140)
         }
 
+        // 核心增强：当未加载进 DOM 时，直接从官方 TurnNavigator 的 turnOutline 大纲提取真实的问答摘要
+        if (!promptText || !respText) {
+          const outlineMap = getTurnOutlineMap()
+          const outlineItem = outlineMap.get(turn)
+          if (outlineItem) {
+            if (!promptText && outlineItem.prompt) {
+              promptText = outlineItem.prompt.trim()
+            }
+            if (!respText && outlineItem.response) {
+              respText = outlineItem.response.trim()
+              isFromOutline = true
+            }
+          }
+        }
+
         if (!promptText) promptText = `第 ${turn} 轮对话`
         if (!respText) {
           respText = rows.length > 0 ? '（展开查看完整对话细节）' : '（历史对话轮次，点击右侧标线可加载并跳转）'
         }
 
-        return { promptText, respText }
+        return { promptText, respText, isFromOutline }
       }
 
       function showPopover(turn, targetEl) {
@@ -742,7 +783,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
 
         activePopoverTurn = turn
         const isStarred = starredTurns.has(turn)
-        const { promptText, respText } = getTurnSummary(turn)
+        const { promptText, respText, isFromOutline } = getTurnSummary(turn)
 
         popoverEl.innerHTML = `
           <div class="dsh-tb-popover-header">
@@ -778,6 +819,11 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
               <span class="dsh-tb-popover-tag">答</span>
               <p class="dsh-tb-popover-text">${escapeHtml(respText)}</p>
             </div>
+            ${isFromOutline ? `
+            <div class="dsh-tb-popover-footnote" style="margin-top: 6px; padding-top: 5px; border-top: 1px dashed var(--dsw-alias-border-l4, rgba(128,128,128,0.18)); font-size: 11px; color: var(--dsw-alias-label-tertiary, #8c8c8c); display: flex; align-items: center; justify-content: space-between;">
+              <span>大纲预览 (未载入正文)</span>
+              <button type="button" class="dsh-tb-load-turn-btn" style="border: none; background: rgba(59,130,246,0.12); color: var(--dsw-alias-state-business-primary, #2563eb); border-radius: 4px; padding: 2px 7px; font-size: 11px; cursor: pointer; font-weight: 500;">点击加载完整内容</button>
+            </div>` : ''}
           </div>
         `
 
@@ -797,6 +843,38 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
             if (svg) {
               svg.setAttribute('fill', nextStarred ? '#f59e0b' : 'none')
               svg.setAttribute('stroke', nextStarred ? '#d97706' : 'currentColor')
+            }
+          }
+        }
+
+        // Bind Load Button for Outline Turns
+        const loadBtn = popoverEl.querySelector('.dsh-tb-load-turn-btn')
+        if (loadBtn) {
+          loadBtn.onclick = (e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            loadBtn.textContent = '加载中...'
+            const mark = document.querySelector(`button[class*="mark"][data-dsh-turn="${turn}"]`) ||
+              Array.from(document.querySelectorAll('button[class*="mark"]')).find((b) => parseTurnNumber(b) === turn)
+            if (mark) {
+              mark.click()
+              let attempts = 0
+              const interval = setInterval(() => {
+                attempts++
+                const landedRow = document.querySelector(`[data-chat-turn="${turn}"]`)
+                if (landedRow) {
+                  clearInterval(interval)
+                  scrollTargetIntoCenter(landedRow)
+                  landedRow.classList.remove('dsh-tb-highlight-target')
+                  void landedRow.offsetWidth
+                  landedRow.classList.add('dsh-tb-highlight-target')
+                  setTimeout(() => landedRow.classList.remove('dsh-tb-highlight-target'), 1400)
+                  showPopover(turn, targetEl)
+                } else if (attempts > 30) {
+                  clearInterval(interval)
+                  loadBtn.textContent = '已触发加载'
+                }
+              }, 100)
             }
           }
         }
@@ -1442,7 +1520,24 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
               } else {
                 const mark = document.querySelector(`button[class*="mark"][data-dsh-turn="${turn}"]`) ||
                   Array.from(document.querySelectorAll('button[class*="mark"]')).find((b) => parseTurnNumber(b) === turn)
-                if (mark) mark.click()
+                if (mark) {
+                  mark.click()
+                  let attempts = 0
+                  const interval = setInterval(() => {
+                    attempts++
+                    const landedRow = document.querySelector(`[data-chat-turn="${turn}"]`)
+                    if (landedRow) {
+                      clearInterval(interval)
+                      scrollTargetIntoCenter(landedRow)
+                      landedRow.classList.remove('dsh-tb-highlight-target')
+                      void landedRow.offsetWidth
+                      landedRow.classList.add('dsh-tb-highlight-target')
+                      setTimeout(() => landedRow.classList.remove('dsh-tb-highlight-target'), 1400)
+                    } else if (attempts > 30) {
+                      clearInterval(interval)
+                    }
+                  }, 100)
+                }
               }
             }
 
