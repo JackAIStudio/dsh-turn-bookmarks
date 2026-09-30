@@ -227,7 +227,7 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
   pointer-events: none !important;
 }
 
-/* 纯数字微型胶囊 (形态 1：无五角星，纯数字加粗，暖金质感) */
+/* 纯数字微型胶囊 (形态 1：带五角星收藏标，纯数字加粗，暖金质感) */
 .dsh-tb-left-capsule {
   position: absolute !important;
   left: 50% !important;
@@ -236,7 +236,7 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
   align-items: center !important;
   justify-content: center !important;
   height: 20px !important;
-  min-width: 32px !important;
+  min-width: 38px !important;
   padding: 0 6px !important;
   border-radius: 10px !important;
   background: var(--dsw-alias-surface-overlay, #ffffff) !important;
@@ -253,6 +253,14 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
   pointer-events: auto !important;
   user-select: none !important;
   white-space: nowrap !important;
+}
+
+.dsh-tb-capsule-star {
+  font-size: 9px !important;
+  margin-right: 2px !important;
+  color: #f59e0b !important;
+  line-height: 1 !important;
+  display: inline-block !important;
 }
 
 .dsh-tb-left-capsule:hover {
@@ -598,9 +606,13 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       } catch {}
     }
 
-    function getSessionIdFromEnvironment(sessionsRef) {
+    function getSessionIdFromEnvironment(sessionsRef, fallbackId) {
       try {
         const snap = sessionsRef?.list?.getSnapshot?.()
+        if (snap?.byId) {
+          const main = Object.values(snap.byId).find((s) => (s?.retainedBy?.mainView ?? 0) > 0)
+          if (main?.id) return main.id
+        }
         if (snap?.current) return snap.current
       } catch {}
       try {
@@ -609,17 +621,20 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         if (sid) return sid
       } catch {}
       try {
-        const row = document.querySelector('[data-dsh-session]')
-        if (row) return row.getAttribute('data-dsh-session')
-      } catch {}
-      try {
         const raw = localStorage.getItem('dsh.sessions.current')
         if (raw) {
           const parsed = JSON.parse(raw)
           if (parsed?.sessionId) return parsed.sessionId
         }
       } catch {}
-      return 'default'
+      try {
+        const selected = document.querySelector('[role="treeitem"][aria-selected="true"]')
+        const rowKey = selected?.getAttribute('data-row-key')
+        if (rowKey && rowKey.startsWith('session:')) return rowKey.slice(8)
+        const row = document.querySelector('[data-dsh-session].YDXeBa_selected, [data-dsh-session][aria-selected="true"], [role="treeitem"][aria-selected="true"] [data-dsh-session]')
+        if (row) return row.getAttribute('data-dsh-session')
+      } catch {}
+      return (fallbackId && fallbackId !== 'default') ? fallbackId : 'default'
     }
 
     // ── Parse Turn Number from Rail Mark element ────────────────────────────
@@ -639,7 +654,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
     function apply(ctx) {
       ensureStyles()
 
-      const sessionsRef = ctx.get('sessions')
+      const sessionsRef = ctx.get('@deepseek-ai/dsh-api-session-controller') || ctx.get('sessions')
       let activeSessionId = getSessionIdFromEnvironment(sessionsRef)
       let starredTurns = new Set()
       // 本地点星计数器：后端同步返回时用它判断"这次请求飞行期间用户是否又点过星"
@@ -850,7 +865,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         // 关键：这次同步绑定"发起请求时"的会话 id。
         // 旧实现在响应回来时读的是全局 activeSessionId —— 只要用户在这段时间里切换了会话，
         // 上一个会话的收藏就会被并进并写死到新会话（这正是 25/27/38 串进 session-4927de52 的成因）。
-        const sid = getSessionIdFromEnvironment(sessionsRef)
+        const sid = getSessionIdFromEnvironment(sessionsRef, activeSessionId)
         activeSessionId = sid
         const all = getStoredBookmarks()
         const list = Array.isArray(all[sid]) ? all[sid] : []
@@ -1412,7 +1427,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
             capsule.type = 'button'
             capsule.dataset.dshTurn = String(turn)
             capsule.title = `第 ${turn} 轮对话 (已收藏，点击直达)`
-            capsule.innerHTML = `<span>${turn}</span>`
+            capsule.innerHTML = `<span class="dsh-tb-capsule-star">★</span><span>${turn}</span>`
 
             capsule.onclick = (e) => {
               e.stopPropagation()
@@ -1633,7 +1648,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
 
       let loopTimer = null
       function tick() {
-        const currentSid = getSessionIdFromEnvironment(sessionsRef)
+        const currentSid = getSessionIdFromEnvironment(sessionsRef, activeSessionId)
         if (currentSid !== activeSessionId) {
           activeSessionId = currentSid
           clearHighlights()
