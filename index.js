@@ -6,8 +6,11 @@
  */
 
 import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { spawn } from 'node:child_process'
+import readline from 'node:readline'
 
 export const name = 'dsh-turn-bookmarks'
 export const inject = ['webServer']
@@ -88,6 +91,73 @@ export function sessionsInHome(home) {
     }
   }
   return ids
+}
+
+/** 寻找某个 session 在本地的日志文件路径（支持 .v3.jsonl.zstd / .jsonl.zstd / .jsonl） */
+export function findSessionFile(home, sessionId) {
+  const root = join(home, 'sessions')
+  if (!existsSync(root)) return null
+  try {
+    const workspaces = readdirSync(root, { withFileTypes: true })
+    for (const ws of workspaces) {
+      if (!ws.isDirectory()) continue
+      const sDir = join(root, ws.name, sessionId)
+      if (existsSync(sDir)) {
+        for (const name of ['session.v3.jsonl.zstd', 'session.jsonl.zstd', 'session.v3.jsonl', 'session.jsonl']) {
+          const f = join(sDir, name)
+          if (existsSync(f)) return f
+        }
+      }
+    }
+  } catch {}
+  return null
+}
+
+/** 精确获取某一轮的前驱截断点 seq */
+export async function getTurnBoundarySeq({ home, sessionId, turn }) {
+  const targetTurn = parseInt(turn, 10)
+  if (!Number.isSafeInteger(targetTurn) || targetTurn <= 0) return null
+  const file = findSessionFile(home, sessionId)
+  if (!file) return null
+  const isCompressed = file.endsWith('.zstd')
+  let stream
+  let proc = null
+  if (isCompressed) {
+    const zstdBin = process.platform === 'win32' ? 'zstd.exe' : (existsSync('/opt/homebrew/bin/zstd') ? '/opt/homebrew/bin/zstd' : 'zstd')
+    proc = spawn(zstdBin, ['-dc', file], { stdio: ['ignore', 'pipe', 'ignore'] })
+    stream = proc.stdout
+  } else {
+    stream = createReadStream(file)
+  }
+  const rl = readline.createInterface({ input: stream })
+  let matchedSeq = null
+  let previousSeq = null
+  try {
+    for await (const line of rl) {
+      if (!line.trim()) continue
+      try {
+        const ev = JSON.parse(line)
+        if (typeof ev.seq === 'number') {
+          if (targetTurn === 1) {
+            if (ev.type === 'turn/start' && ev.data?.turn === 1) {
+              matchedSeq = previousSeq !== null ? previousSeq : 0
+              break
+            }
+          } else if (ev.type === 'turn/end' && ev.data?.turn === targetTurn - 1) {
+            matchedSeq = ev.seq
+            break
+          }
+          previousSeq = ev.seq
+        }
+      } catch {}
+    }
+  } finally {
+    rl.close()
+    if (proc) {
+      try { proc.kill() } catch {}
+    }
+  }
+  return matchedSeq
 }
 
 /**
@@ -271,4 +341,28 @@ export function apply(ctx) {
       sendJson(res, 200, { ok: true, sessionId: sid, query, matches })
     },
   }), 'dsh-turn-bookmarks: search')
+
+  // 4. Turn boundary resolution for Prompt Edit & Fork Rerun
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: '/dsh-turn-bookmarks/turn-boundary',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        res.setHeader('allow', 'GET')
+        return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+      }
+      const url = new URL(req.url, 'http://127.0.0.1')
+      const sid = (url.searchParams.get('sessionId') || '').trim()
+      const turn = parseInt(url.searchParams.get('turn') || '', 10)
+      if (!sid || !Number.isSafeInteger(turn) || turn <= 0) {
+        return sendJson(res, 400, { ok: false, error: 'invalid sessionId or turn' })
+      }
+      try {
+        const atSeq = await getTurnBoundarySeq({ home: resolveDshHome(), sessionId: sid, turn })
+        return sendJson(res, 200, { ok: true, sessionId: sid, turn, atSeq })
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message })
+      }
+    },
+  }), 'dsh-turn-bookmarks: turn-boundary')
 }

@@ -581,6 +581,109 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
   0% { transform: scale(1); filter: brightness(1); }
   100% { transform: scale(1.08); filter: brightness(1.2); }
 }
+
+/* ==================== 8. Message Prompt Inline Editor & Edit Button ==================== */
+.dsh-tb-msg-edit {
+  border: none !important;
+  background: transparent !important;
+  cursor: pointer !important;
+  padding: 3px 4px !important;
+  border-radius: 4px !important;
+  font-size: 11.5px !important;
+  color: var(--dsw-alias-label-tertiary, #6e7781) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  line-height: 1 !important;
+  transition: all 0.15s ease !important;
+}
+
+.dsh-tb-msg-edit:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.15)) !important;
+  color: var(--dsw-alias-brand-primary, #3b82f6) !important;
+}
+
+.dsh-tb-inline-editor {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 8px !important;
+  width: 100% !important;
+  margin-top: 4px !important;
+  animation: dshTbFadeIn 0.15s ease-out !important;
+}
+
+@keyframes dshTbFadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.dsh-tb-editor-textarea {
+  width: 100% !important;
+  min-height: 72px !important;
+  padding: 10px 14px !important;
+  box-sizing: border-box !important;
+  background: var(--dsw-alias-bg-layer-2, rgba(30, 41, 59, 0.95)) !important;
+  color: var(--dsw-alias-label-primary, #f8fafc) !important;
+  border: 1.5px solid var(--dsw-alias-brand-primary, #3b82f6) !important;
+  border-radius: 8px !important;
+  font-family: inherit !important;
+  font-size: var(--dsh-content-font-size, 14px) !important;
+  line-height: 1.5 !important;
+  resize: vertical !important;
+  outline: none !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18) !important;
+}
+
+.dsh-tb-editor-actions {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 2px !important;
+}
+
+.dsh-tb-editor-hint {
+  font-size: 11.5px !important;
+  color: var(--dsw-alias-label-tertiary, #64748b) !important;
+  user-select: none !important;
+}
+
+.dsh-tb-editor-btns {
+  display: flex !important;
+  gap: 8px !important;
+}
+
+.dsh-tb-btn {
+  padding: 5px 14px !important;
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  cursor: pointer !important;
+  border: 1px solid var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.25)) !important;
+  background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.06)) !important;
+  color: var(--dsw-alias-label-secondary, #94a3b8) !important;
+  transition: all 0.15s ease !important;
+}
+
+.dsh-tb-btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
+  color: var(--dsw-alias-label-primary, #ffffff) !important;
+}
+
+.dsh-tb-btn-primary {
+  background: var(--dsw-alias-brand-primary, #2563eb) !important;
+  color: #ffffff !important;
+  border: 1px solid transparent !important;
+}
+
+.dsh-tb-btn-primary:hover {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+}
+
+.dsh-tb-btn-primary:disabled {
+  opacity: 0.6 !important;
+  cursor: not-allowed !important;
+}
     `
 
     function ensureStyles() {
@@ -1019,37 +1122,238 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           const isStarred = starredTurns.has(turn)
           if (starBtn) {
             const currentStarState = starBtn.classList.contains('dsh-tb-starred')
-            if (currentStarState === isStarred) continue
-            starBtn.classList.toggle('dsh-tb-starred', isStarred)
+            if (currentStarState !== isStarred) {
+              starBtn.classList.toggle('dsh-tb-starred', isStarred)
+              starBtn.title = isStarred ? `取消收藏第 ${turn} 轮` : `收藏第 ${turn} 轮`
+              starBtn.innerHTML = `
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="${isStarred ? '#f59e0b' : 'none'}" stroke="${isStarred ? '#d97706' : 'currentColor'}" stroke-width="1.8" stroke-linejoin="round">
+                  <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
+                </svg>
+              `
+            }
+          } else {
+            starBtn = document.createElement('button')
+            starBtn.className = 'dsh-tb-msg-star'
+            starBtn.type = 'button'
             starBtn.title = isStarred ? `取消收藏第 ${turn} 轮` : `收藏第 ${turn} 轮`
+            starBtn.setAttribute('aria-label', starBtn.title)
+            starBtn.classList.toggle('dsh-tb-starred', isStarred)
             starBtn.innerHTML = `
               <svg width="15" height="15" viewBox="0 0 24 24" fill="${isStarred ? '#f59e0b' : 'none'}" stroke="${isStarred ? '#d97706' : 'currentColor'}" stroke-width="1.8" stroke-linejoin="round">
                 <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
               </svg>
             `
-            continue
+            const onToggle = (e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              toggleBookmark(turn)
+            }
+            starBtn.addEventListener('click', onToggle, { capture: true })
+            starBtn.addEventListener('pointerdown', onToggle, { capture: true })
+            actionsBar.appendChild(starBtn)
           }
 
-          starBtn = document.createElement('button')
-          starBtn.className = 'dsh-tb-msg-star'
-          starBtn.type = 'button'
-          starBtn.title = isStarred ? `取消收藏第 ${turn} 轮` : `收藏第 ${turn} 轮`
-          starBtn.setAttribute('aria-label', starBtn.title)
-          starBtn.classList.toggle('dsh-tb-starred', isStarred)
-          starBtn.innerHTML = `
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="${isStarred ? '#f59e0b' : 'none'}" stroke="${isStarred ? '#d97706' : 'currentColor'}" stroke-width="1.8" stroke-linejoin="round">
-              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>
-            </svg>
-          `
-          const onToggle = (e) => {
-            e.stopPropagation()
-            e.preventDefault()
-            toggleBookmark(turn)
+          // 2. Edit & Fork-Rerun Button (针对用户提示词行)
+          const userBubble = row.querySelector('[class*="_bubble"], [class*="bubble"]')
+          if (userBubble && !actionsBar.querySelector('.dsh-tb-msg-edit')) {
+            const editBtn = document.createElement('button')
+            editBtn.className = 'dsh-tb-msg-edit'
+            editBtn.type = 'button'
+            editBtn.title = `编辑第 ${turn} 轮提示词并从此处重新运行`
+            editBtn.setAttribute('aria-label', editBtn.title)
+            editBtn.innerHTML = `
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+              </svg>
+            `
+            const onEdit = (e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              openInlineEditor(row, turn, userBubble)
+            }
+            editBtn.addEventListener('click', onEdit, { capture: true })
+            editBtn.addEventListener('pointerdown', onEdit, { capture: true })
+            actionsBar.appendChild(editBtn)
           }
-          starBtn.addEventListener('click', onToggle, { capture: true })
-          starBtn.addEventListener('pointerdown', onToggle, { capture: true })
-          actionsBar.appendChild(starBtn)
         }
+      }
+
+      // ── Inline Prompt Editor & Fork-Rerun Engine ──────────────────────────
+      function openInlineEditor(row, turn, userBubble) {
+        if (row.querySelector('.dsh-tb-inline-editor')) return
+        const originalText = userBubble.innerText.trim()
+        userBubble.style.display = 'none'
+
+        const editor = document.createElement('div')
+        editor.className = 'dsh-tb-inline-editor'
+
+        const textarea = document.createElement('textarea')
+        textarea.className = 'dsh-tb-editor-textarea'
+        textarea.value = originalText
+        textarea.placeholder = '编辑你的提示词...'
+
+        const autoResize = () => {
+          textarea.style.height = 'auto'
+          textarea.style.height = Math.max(72, Math.min(380, textarea.scrollHeight + 4)) + 'px'
+        }
+        textarea.addEventListener('input', autoResize)
+
+        const footer = document.createElement('div')
+        footer.className = 'dsh-tb-editor-actions'
+
+        const hint = document.createElement('span')
+        hint.className = 'dsh-tb-editor-hint'
+        hint.textContent = '⌘ Enter 重新运行 · Esc 取消'
+
+        const btns = document.createElement('div')
+        btns.className = 'dsh-tb-editor-btns'
+
+        const cancelBtn = document.createElement('button')
+        cancelBtn.className = 'dsh-tb-btn'
+        cancelBtn.type = 'button'
+        cancelBtn.textContent = '取消'
+
+        const runBtn = document.createElement('button')
+        runBtn.className = 'dsh-tb-btn dsh-tb-btn-primary'
+        runBtn.type = 'button'
+        runBtn.textContent = '重新运行'
+
+        btns.appendChild(cancelBtn)
+        btns.appendChild(runBtn)
+        footer.appendChild(hint)
+        footer.appendChild(btns)
+
+        editor.appendChild(textarea)
+        editor.appendChild(footer)
+
+        userBubble.parentNode.insertBefore(editor, userBubble.nextSibling)
+        autoResize()
+        textarea.focus()
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+
+        const closeEditor = () => {
+          editor.remove()
+          userBubble.style.display = ''
+        }
+
+        cancelBtn.addEventListener('click', closeEditor)
+
+        const doSubmit = async () => {
+          const newText = textarea.value.trim()
+          if (!newText) {
+            textarea.focus()
+            return
+          }
+          runBtn.disabled = true
+          cancelBtn.disabled = true
+          textarea.disabled = true
+          runBtn.textContent = '正在分叉...'
+
+          try {
+            await forkAndRerunTurn(turn, newText)
+            closeEditor()
+          } catch (err) {
+            console.error('[dsh-turn-bookmarks] Fork & rerun failed:', err)
+            runBtn.disabled = false
+            cancelBtn.disabled = false
+            textarea.disabled = false
+            runBtn.textContent = '重新运行'
+            alert('从此处重新运行失败：' + (err.message || String(err)))
+          }
+        }
+
+        runBtn.addEventListener('click', doSubmit)
+
+        textarea.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            closeEditor()
+          } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault()
+            doSubmit()
+          }
+        })
+      }
+
+      async function forkAndRerunTurn(turn, newText) {
+        const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
+        if (!currentSessionId || currentSessionId === 'default') {
+          throw new Error('未找到当前活跃会话 ID')
+        }
+
+        let atSeq = undefined
+        try {
+          const res = await fetch('/dsh-turn-bookmarks/turn-boundary?sessionId=' + encodeURIComponent(currentSessionId) + '&turn=' + turn)
+          if (res.ok) {
+            const data = await res.json()
+            if (data.ok && Number.isSafeInteger(data.atSeq)) {
+              atSeq = data.atSeq
+            }
+          }
+        } catch (err) {
+          console.warn('[dsh-turn-bookmarks] Failed to fetch turn boundary from backend:', err)
+        }
+
+        if (!sessionsRef || typeof sessionsRef.fork !== 'function') {
+          throw new Error('会话控制器不可用，无法执行 fork')
+        }
+
+        const childId = await sessionsRef.fork({
+          sessionId: currentSessionId,
+          ...(atSeq !== undefined ? { atSeq } : {}),
+          increaseTitle: true,
+        })
+
+        if (!childId) {
+          throw new Error('分叉会话未返回有效 ID')
+        }
+
+        const uiWorkspace = ctx.get('uiWorkspace')
+        if (uiWorkspace && typeof uiWorkspace.openSession === 'function') {
+          uiWorkspace.openSession(childId)
+        } else if (typeof sessionsRef.select === 'function') {
+          sessionsRef.select(childId)
+        }
+
+        submitPromptWhenReady(newText)
+      }
+
+      async function submitPromptWhenReady(text) {
+        for (let i = 0; i < 40; i++) {
+          await new Promise((r) => setTimeout(r, 120))
+          const composer = document.querySelector('div[data-composer-input], [data-composer-input], div[contenteditable="true"], div[contenteditable]')
+          if (composer && composer.isConnected) {
+            try {
+              composer.focus()
+              composer.innerHTML = ''
+              document.execCommand('insertText', false, text)
+              composer.dispatchEvent(new Event('input', { bubbles: true }))
+
+              await new Promise((r) => setTimeout(r, 100))
+
+              const card = document.querySelector('[data-composer-card]') || composer.closest('[class*="card"]') || document
+              const sendBtn = card.querySelector('button[aria-label*="发送"], button[aria-label*="Send"], button[class*="primary"]:not(:disabled)')
+              if (sendBtn && !sendBtn.disabled) {
+                sendBtn.click()
+                return true
+              }
+
+              composer.dispatchEvent(new KeyboardEvent('keydown', {
+                key: 'Enter',
+                code: 'Enter',
+                keyCode: 13,
+                which: 13,
+                bubbles: true,
+                cancelable: true
+              }))
+              return true
+            } catch (err) {
+              console.warn('[dsh-turn-bookmarks] Auto-submit prompt error:', err)
+            }
+          }
+        }
+        return false
       }
 
       // ── Rail Marks Synchronizer (双轨架构联动) ─────────────────────────────

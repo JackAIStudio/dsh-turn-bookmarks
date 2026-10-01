@@ -6,7 +6,7 @@
   "type": "module",
   "main": "./index.js",
   "scripts": {
-    "test": "node test/home-paths.test.mjs && node test/legacy-migration.test.mjs && node test/session-scope.test.mjs"
+    "test": "node test/home-paths.test.mjs && node test/legacy-migration.test.mjs && node test/session-scope.test.mjs && node test/turn-boundary.test.mjs"
   },
   "exports": {
     ".": "./index.js",
