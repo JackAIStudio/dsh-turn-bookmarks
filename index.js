@@ -103,9 +103,11 @@ export function findSessionFile(home, sessionId) {
       if (!ws.isDirectory()) continue
       const sDir = join(root, ws.name, sessionId)
       if (existsSync(sDir)) {
-        for (const name of ['session.v3.jsonl.zstd', 'session.jsonl.zstd', 'session.v3.jsonl', 'session.jsonl']) {
-          const f = join(sDir, name)
-          if (existsSync(f)) return f
+        const files = readdirSync(sDir)
+        for (const name of files) {
+          if (name.startsWith('session') && (name.endsWith('.jsonl.zstd') || name.endsWith('.jsonl'))) {
+            return join(sDir, name)
+          }
         }
       }
     }
@@ -131,7 +133,7 @@ export async function getTurnBoundarySeq({ home, sessionId, turn }) {
   }
   const rl = readline.createInterface({ input: stream })
   let matchedSeq = null
-  let previousSeq = null
+  let lastInitSeq = null
   try {
     for await (const line of rl) {
       if (!line.trim()) continue
@@ -139,15 +141,17 @@ export async function getTurnBoundarySeq({ home, sessionId, turn }) {
         const ev = JSON.parse(line)
         if (typeof ev.seq === 'number') {
           if (targetTurn === 1) {
-            if (ev.type === 'turn/start' && ev.data?.turn === 1) {
-              matchedSeq = previousSeq !== null ? previousSeq : 0
+            // 第 1 轮：在遇到任何用户消息、收件箱投递或 turn/start 之前，截取最后一条系统/配置事件
+            if (ev.type === 'agent/inbox/spliced' || ev.type === 'user/message' || ev.type === 'turn/start') {
+              matchedSeq = lastInitSeq !== null ? lastInitSeq : 0
               break
             }
+            lastInitSeq = ev.seq
           } else if (ev.type === 'turn/end' && ev.data?.turn === targetTurn - 1) {
+            // 第 N 轮 (N > 1)：严格截断在第 N - 1 轮的 turn/end，排除后续可能排队的 inbox
             matchedSeq = ev.seq
             break
           }
-          previousSeq = ev.seq
         }
       } catch {}
     }

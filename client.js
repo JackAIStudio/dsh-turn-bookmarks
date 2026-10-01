@@ -1282,17 +1282,49 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           throw new Error('未找到当前活跃会话 ID')
         }
 
+        // 1. 本地优先：直接从内存中的 session 事件流精准提取截断点
         let atSeq = undefined
+        try {
+          const sessionObj = sessionsRef?.binding?.(currentSessionId)?.session
+          const entries = sessionObj?.eventSource?.getSnapshot?.()?.entries
+          if (Array.isArray(entries) && entries.length > 0) {
+            let lastInitSeq = null
+            for (const ev of entries) {
+              if (typeof ev?.seq !== 'number') continue
+              if (turn === 1) {
+                if (ev.type === 'agent/inbox/spliced' || ev.type === 'user/message' || ev.type === 'turn/start') {
+                  atSeq = lastInitSeq !== null ? lastInitSeq : 0
+                  break
+                }
+                lastInitSeq = ev.seq
+              } else if (ev.type === 'turn/end' && ev.data?.turn === turn - 1) {
+                atSeq = ev.seq
+                break
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[dsh-turn-bookmarks] Failed to resolve boundary from client memory:', err)
+        }
+
+        // 2. 服务端兜底：若客户端内存未完整命中，向服务端请求精确边界
+        if (typeof atSeq !== 'number') {
         try {
           const res = await fetch('/dsh-turn-bookmarks/turn-boundary?sessionId=' + encodeURIComponent(currentSessionId) + '&turn=' + turn)
           if (res.ok) {
             const data = await res.json()
-            if (data.ok && Number.isSafeInteger(data.atSeq)) {
+            if (data.ok && typeof data.atSeq === 'number' && Number.isSafeInteger(data.atSeq) && data.atSeq >= 0) {
               atSeq = data.atSeq
             }
           }
         } catch (err) {
           console.warn('[dsh-turn-bookmarks] Failed to fetch turn boundary from backend:', err)
+        }
+        }
+
+        // 严格安全闸门：必须是明确的非负整数，任何 null / undefined 严禁放行
+        if (typeof atSeq !== 'number' || atSeq < 0 || !Number.isSafeInteger(atSeq)) {
+          throw new Error(`无法精确定位第 ${turn} 轮历史分界点 (atSeq 为空或无效)，已阻止分叉以防产生重复消息`)
         }
 
         if (!sessionsRef || typeof sessionsRef.fork !== 'function') {
@@ -1301,7 +1333,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
 
         const childId = await sessionsRef.fork({
           sessionId: currentSessionId,
-          ...(atSeq !== undefined ? { atSeq } : {}),
+          atSeq,
           increaseTitle: true,
         })
 
