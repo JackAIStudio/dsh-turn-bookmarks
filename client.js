@@ -206,7 +206,7 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
 .dsh-tb-left-rail {
   position: fixed !important;
   z-index: 99 !important;
-  width: 44px !important;
+  width: 28px !important;
   pointer-events: none !important;
   user-select: none !important;
   display: none;
@@ -236,8 +236,8 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
   align-items: center !important;
   justify-content: center !important;
   height: 20px !important;
-  min-width: 38px !important;
-  padding: 0 6px !important;
+  min-width: 22px !important;
+  padding: 0 4px !important;
   border-radius: 10px !important;
   background: var(--dsw-alias-surface-overlay, #ffffff) !important;
   border: 1.5px solid #f59e0b !important;
@@ -256,11 +256,7 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
 }
 
 .dsh-tb-capsule-star {
-  font-size: 9px !important;
-  margin-right: 2px !important;
-  color: #f59e0b !important;
-  line-height: 1 !important;
-  display: inline-block !important;
+  display: none !important;
 }
 
 .dsh-tb-left-capsule:hover {
@@ -1763,30 +1759,46 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           return
         }
 
+        // 1. 会话视图可见性判定：必须处于真实对话页面，且滚动容器可见
+        const convScroll = document.querySelector('[data-conversation-scroll]')
+        if (!convScroll || convScroll.offsetWidth <= 0 || convScroll.offsetHeight <= 0) {
+          leftRailEl.style.display = 'none'
+          return
+        }
+
+        // 2. 检查会话内部是否有真实消息行渲染（避免切换至全屏文件编辑器等视图时残留）
+        const firstTurn = convScroll.querySelector('[data-chat-turn]')
+        if (!firstTurn || firstTurn.offsetWidth <= 0) {
+          leftRailEl.style.display = 'none'
+          return
+        }
+
+        // 3. 计算消息列与会话视口左边缘之间的留白宽度 (Gutter)
+        const convRect = convScroll.getBoundingClientRect()
+        const turnRect = firstTurn.getBoundingClientRect()
+        const leftGutter = turnRect.left - convRect.left
+
+        // 防遮挡熔断：当右侧栏展开（better-sidebar 挤窄会话）、窗口缩窄或正文贴边时，
+        // 留白小于 36px 或整个会话宽度低于 520px，自动隐藏左轨，绝不覆盖消息正文
+        if (leftGutter < 36 || convRect.width < 520) {
+          leftRailEl.style.display = 'none'
+          return
+        }
+
+        const railWidth = 28
+        const leftPos = Math.round(convRect.left + (leftGutter / 2) - (railWidth / 2))
+
         const allMarks = Array.from(document.querySelectorAll('button[class*="mark"]'))
 
-        // 黄金视口比例：导轨线保持在 320~460px 的优雅舒展高度，垂直居中偏上停靠
+        // 黄金视口比例：导轨线保持在 260~440px 高度，垂直居中偏上停靠
         const viewportH = window.innerHeight || 800
-        const railHeight = Math.max(300, Math.min(Math.round(viewportH * 0.5), 440))
+        const railHeight = Math.max(260, Math.min(Math.round(viewportH * 0.5), 440))
         const railTop = Math.max(70, Math.round(viewportH * 0.22))
-
-        // 计算位置 A：主工作区最左外缘（紧贴侧边栏分割线）
-        let leftPos = 16
-        const sidebar = document.querySelector('aside, [class*="sidebar"], [data-sidebar]')
-        if (sidebar && sidebar.offsetWidth > 60) {
-          const sRect = sidebar.getBoundingClientRect()
-          leftPos = sRect.right + 14
-        } else {
-          const mainEl = document.querySelector('main') || document.querySelector('[data-conversation-scroll]')
-          if (mainEl) {
-            leftPos = mainEl.getBoundingClientRect().left + 14
-          }
-        }
 
         leftRailEl.style.display = 'block'
         leftRailEl.style.top = `${Math.round(railTop)}px`
         leftRailEl.style.height = `${Math.round(railHeight)}px`
-        leftRailEl.style.left = `${Math.round(leftPos)}px`
+        leftRailEl.style.left = `${Math.max(8, leftPos)}px`
 
         // 垂直渐变导轨线
         if (!leftRailEl.querySelector('.dsh-tb-left-rail-guide')) {
@@ -1841,7 +1853,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
             capsule.type = 'button'
             capsule.dataset.dshTurn = String(turn)
             capsule.title = `第 ${turn} 轮对话 (已收藏，点击直达)`
-            capsule.innerHTML = `<span class="dsh-tb-capsule-star">★</span><span>${turn}</span>`
+            capsule.innerHTML = `<span>${turn}</span>`
 
             capsule.onclick = (e) => {
               e.stopPropagation()
@@ -2132,11 +2144,15 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       })
       observer.observe(document.body, { childList: true, subtree: true })
 
+      const onWindowResize = () => { updateLeftBookmarkRail() }
+      window.addEventListener('resize', onWindowResize)
+
       return () => {
         if (loopTimer) clearInterval(loopTimer)
         observer.disconnect()
         clearHighlights()
         if (popoverCloseTimer) clearTimeout(popoverCloseTimer)
+        window.removeEventListener('resize', onWindowResize)
         popoverEl?.remove()
         leftRailEl?.remove()
         document.getElementById(CSS_ID)?.remove()
