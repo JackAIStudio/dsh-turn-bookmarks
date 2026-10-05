@@ -164,6 +164,71 @@ export async function getTurnBoundarySeq({ home, sessionId, turn }) {
   return matchedSeq
 }
 
+/** 精确获取某一轮的原始提示词（保留完整的 @[标题](dsh-session:...) 会话引用） */
+export async function getTurnOriginalPrompt({ home, sessionId, turn }) {
+  const targetTurn = parseInt(turn, 10);
+  if (!Number.isSafeInteger(targetTurn) || targetTurn <= 0) return null;
+  const file = findSessionFile(home, sessionId);
+  if (!file) return null;
+  const isCompressed = file.endsWith('.zstd');
+  let stream;
+  let proc = null;
+  if (isCompressed) {
+    const zstdBin = process.platform === 'win32' ? 'zstd.exe' : (fs.existsSync('/opt/homebrew/bin/zstd') ? '/opt/homebrew/bin/zstd' : 'zstd');
+    proc = spawn(zstdBin, ['-dc', file], { stdio: ['ignore', 'pipe', 'ignore'] });
+    stream = proc.stdout;
+  } else {
+    stream = createReadStream(file);
+  }
+  const rl = readline.createInterface({ input: stream });
+  let lastInboxInserted = null;
+  let turnUserMessage = null;
+  let matchedPrompt = null;
+  let foundTargetTurn = false;
+  try {
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try {
+        const ev = JSON.parse(line);
+        if (ev.type === 'agent/inbox/spliced' && ev.data?.target === 'next-turn' && Array.isArray(ev.data?.inserted) && ev.data.inserted.length > 0) {
+          lastInboxInserted = ev.data.inserted;
+        }
+        if (ev.type === 'turn/start' && ev.data?.turn === targetTurn) {
+          foundTargetTurn = true;
+          if (lastInboxInserted) {
+            const textBlocks = lastInboxInserted.flatMap((item) => 
+              (item.content || []).filter((c) => c.type === 'text').map((c) => c.text)
+            );
+            if (textBlocks.length > 0) {
+              matchedPrompt = textBlocks.join(String.fromCharCode(10));
+              break;
+            }
+          }
+        }
+        if (foundTargetTurn && ev.type === 'user/message') {
+          if (ev.data?.content) {
+            const text = (ev.data.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(String.fromCharCode(10));
+            if (text) {
+              turnUserMessage = text;
+              break;
+            }
+          }
+        }
+        if (foundTargetTurn && ev.type === 'turn/end' && ev.data?.turn === targetTurn) {
+          break;
+        }
+      } catch {}
+    }
+  } finally {
+    rl.close();
+    if (proc) {
+      try { proc.kill(); } catch {}
+    }
+  }
+  if (!foundTargetTurn) return null;
+  return matchedPrompt || turnUserMessage || null;
+}
+
 /**
  * 一次性搬家（幂等）：本插件曾把路径写死成 ~/.dsh，桌面端的收藏因此落进了默认实例的
  * 数据目录。第一次在别的 home 启动时，把"会话确实属于本 home"的条目并回本 home，
@@ -369,4 +434,28 @@ export function apply(ctx) {
       }
     },
   }), 'dsh-turn-bookmarks: turn-boundary')
+
+  // 5. Original prompt resolution for Prompt Edit & Fork Rerun (preserving session references)
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: '/dsh-turn-bookmarks/turn-prompt',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        res.setHeader('allow', 'GET');
+        return sendJson(res, 405, { ok: false, error: 'method not allowed' });
+      }
+      const url = new URL(req.url, 'http://127.0.0.1');
+      const sid = (url.searchParams.get('sessionId') || '').trim();
+      const turn = parseInt(url.searchParams.get('turn') || '', 10);
+      if (!sid || !Number.isSafeInteger(turn) || turn <= 0) {
+        return sendJson(res, 400, { ok: false, error: 'invalid sessionId or turn' });
+      }
+      try {
+        const prompt = await getTurnOriginalPrompt({ home: resolveDshHome(), sessionId: sid, turn });
+        return sendJson(res, 200, { ok: true, sessionId: sid, turn, prompt });
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message });
+      }
+    },
+  }), 'dsh-turn-bookmarks: turn-prompt');
 }

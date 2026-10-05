@@ -579,6 +579,62 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
 }
 
 /* ==================== 8. Message Prompt Inline Editor & Edit Button ==================== */
+
+.dsh-tb-ref-bar {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 4px 6px !important;
+  background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.04)) !important;
+  border: 1px dashed var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.2)) !important;
+  border-radius: 6px !important;
+}
+
+.dsh-tb-ref-label {
+  font-size: 11px !important;
+  color: var(--dsw-alias-label-tertiary, #64748b) !important;
+  user-select: none !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 3px !important;
+}
+
+.dsh-tb-ref-chip {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 2px 7px !important;
+  border-radius: 4px !important;
+  background: var(--dsw-alias-state-business-tertiary, rgba(37, 99, 235, 0.12)) !important;
+  color: var(--dsw-alias-state-business-primary, #3b82f6) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  line-height: 1.4 !important;
+  user-select: none !important;
+}
+
+.dsh-tb-ref-icon {
+  width: 13px !important;
+  height: 13px !important;
+  flex: none !important;
+  display: inline-block !important;
+  vertical-align: middle !important;
+}
+
+.dsh-tb-ref-close {
+  cursor: pointer !important;
+  margin-left: 2px !important;
+  font-size: 13px !important;
+  opacity: 0.65 !important;
+  line-height: 1 !important;
+}
+
+.dsh-tb-ref-close:hover {
+  opacity: 1 !important;
+  color: #ef4444 !important;
+}
+
 .dsh-tb-msg-edit {
   border: none !important;
   background: transparent !important;
@@ -1178,15 +1234,29 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       // ── Inline Prompt Editor & Fork-Rerun Engine ──────────────────────────
       function openInlineEditor(row, turn, userBubble) {
         if (row.querySelector('.dsh-tb-inline-editor')) return
-        const originalText = userBubble.innerText.trim()
+        const fallbackText = userBubble.innerText.trim()
         userBubble.style.display = 'none'
 
         const editor = document.createElement('div')
         editor.className = 'dsh-tb-inline-editor'
 
+        // 引用会话气泡展示栏
+        const refBar = document.createElement('div')
+        refBar.className = 'dsh-tb-ref-bar'
+        refBar.style.display = 'none'
+
+        const refLabel = document.createElement('span')
+        refLabel.className = 'dsh-tb-ref-label'
+        refLabel.textContent = '引用会话：'
+        refBar.appendChild(refLabel)
+
+        const refChipsWrap = document.createElement('div')
+        refChipsWrap.style.display = 'contents'
+        refBar.appendChild(refChipsWrap)
+
         const textarea = document.createElement('textarea')
         textarea.className = 'dsh-tb-editor-textarea'
-        textarea.value = originalText
+        textarea.value = fallbackText
         textarea.placeholder = '编辑你的提示词...'
 
         const autoResize = () => {
@@ -1220,6 +1290,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         footer.appendChild(hint)
         footer.appendChild(btns)
 
+        editor.appendChild(refBar)
         editor.appendChild(textarea)
         editor.appendChild(footer)
 
@@ -1227,6 +1298,83 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         autoResize()
         textarea.focus()
         textarea.setSelectionRange(textarea.value.length, textarea.value.length)
+
+        // 会话引用的状态存储：[{ label, uri, mention }]
+        let activeReferences = []
+        let rawOriginalPrompt = fallbackText
+
+        const renderRefChips = () => {
+          refChipsWrap.innerHTML = ''
+          if (activeReferences.length === 0) {
+            refBar.style.display = 'none'
+            return
+          }
+          refBar.style.display = 'flex'
+          for (const ref of activeReferences) {
+            const chip = document.createElement('span')
+            chip.className = 'dsh-tb-ref-chip'
+            chip.title = ref.mention || ref.label
+            chip.innerHTML = `
+              <svg class="dsh-tb-ref-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2">
+                <path d="M5 6.75H11" stroke="currentColor"/>
+                <path d="M5 9H8" stroke="currentColor"/>
+                <path d="M2.37 11.25C1.59 9.89 1.32 8.3 1.62 6.76C1.92 5.22 2.76 3.84 4 2.88C5.23 1.91 6.77 1.43 8.34 1.51C9.9 1.59 11.39 2.24 12.51 3.32C13.64 4.41 14.34 5.87 14.48 7.43C14.61 8.99 14.18 10.55 13.26 11.82C12.34 13.09 10.99 13.98 9.46 14.33C8.19 14.63 6.86 14.53 5.65 14.06C5.17 13.87 4.77 13.49 4.27 13.4C3.67 13.28 2.95 13.56 2.04 14.33" stroke="currentColor"/>
+              </svg>
+              <span>${ref.label}</span>
+            `
+            const delBtn = document.createElement('span')
+            delBtn.className = 'dsh-tb-ref-close'
+            delBtn.textContent = '×'
+            delBtn.title = '移除此会话引用'
+            delBtn.addEventListener('click', (e) => {
+              e.stopPropagation()
+              activeReferences = activeReferences.filter((r) => r.mention !== ref.mention)
+              renderRefChips()
+            })
+            chip.appendChild(delBtn)
+            refChipsWrap.appendChild(chip)
+          }
+        }
+
+        // 异步解析底层真实的原始提示词与气泡引用
+        ;(async () => {
+          try {
+            const prompt = await resolveTurnPrompt(turn, userBubble)
+            if (prompt) {
+              rawOriginalPrompt = prompt
+              const SESSION_MENTION_RE = /@\[((?:\.|[^\]])*)\]\((dsh-session:[A-Za-z0-9_-]+)\)|(dsh-session:[A-Za-z0-9_-]+)/gu
+              const refs = []
+              let match
+              const seen = new Set()
+              while ((match = SESSION_MENTION_RE.exec(prompt)) !== null) {
+                const label = match[1] || '引用会话'
+                const uri = match[2] || match[3]
+                const mention = match[0]
+                if (!seen.has(mention)) {
+                  seen.add(mention)
+                  refs.push({ label, uri, mention })
+                }
+              }
+              if (refs.length > 0) {
+                activeReferences = refs
+                renderRefChips()
+
+                // 清洗出用户可读的正文（把 @[...] 转换成直观的 @label 显示在编辑框中）
+                let cleanPrompt = prompt
+                for (const r of refs) {
+                  cleanPrompt = cleanPrompt.replaceAll(r.mention, '@' + r.label)
+                }
+                textarea.value = cleanPrompt.trim()
+                autoResize()
+              } else {
+                textarea.value = prompt.trim()
+                autoResize()
+              }
+            }
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] Failed to resolve accurate turn prompt:', err)
+          }
+        })()
 
         const closeEditor = () => {
           editor.remove()
@@ -1236,8 +1384,8 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         cancelBtn.addEventListener('click', closeEditor)
 
         const doSubmit = async () => {
-          const newText = textarea.value.trim()
-          if (!newText) {
+          const editedText = textarea.value.trim()
+          if (!editedText) {
             textarea.focus()
             return
           }
@@ -1247,7 +1395,19 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           runBtn.textContent = '正在分叉...'
 
           try {
-            await forkAndRerunTurn(turn, newText)
+            // 合成符合 DSH 会话要求的完整带有气泡引用的提示词
+            let fullText = editedText
+            for (const ref of activeReferences) {
+              const displayTag = '@' + ref.label
+              if (fullText.includes(displayTag)) {
+                fullText = fullText.replaceAll(displayTag, ref.mention)
+              } else if (!fullText.includes(ref.mention)) {
+                // 如果用户没有在文字中保留 @label，自动前置补齐
+                fullText = ref.mention + ' ' + fullText
+              }
+            }
+
+            await forkAndRerunTurn(turn, fullText)
             closeEditor()
           } catch (err) {
             console.error('[dsh-turn-bookmarks] Fork & rerun failed:', err)
@@ -1272,6 +1432,73 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         })
       }
 
+      async function resolveTurnPrompt(turn, userBubble) {
+        const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
+
+        // 1. 本地内存优先：直接从客户端 session 的 eventSource 提取完整的带有 @[标题](dsh-session:...) 的原始 prompt
+        try {
+          const sessionObj = sessionsRef?.binding?.(currentSessionId)?.session
+          const entries = sessionObj?.eventSource?.getSnapshot?.()?.entries
+          if (Array.isArray(entries) && entries.length > 0) {
+            let lastInboxInserted = null
+            for (const entry of entries) {
+              const ev = entry?.event || entry
+              if (!ev || typeof ev.type !== 'string') continue
+              if (ev.type === 'agent/inbox/spliced' && ev.data?.target === 'next-turn' && Array.isArray(ev.data?.inserted) && ev.data.inserted.length > 0) {
+                lastInboxInserted = ev.data.inserted
+              }
+              if (ev.type === 'turn/start' && ev.data?.turn === turn) {
+                if (lastInboxInserted) {
+                  const textBlocks = lastInboxInserted.flatMap((item) =>
+                    (item.content || []).filter((c) => c.type === 'text').map((c) => c.text)
+                  )
+                  if (textBlocks.length > 0) {
+                    return textBlocks.join(String.fromCharCode(10))
+                  }
+                }
+              }
+            }
+          }
+        } catch (err) {
+          console.warn('[dsh-turn-bookmarks] Failed to resolve prompt from client memory:', err)
+        }
+
+        // 2. 服务端精准提取
+        if (currentSessionId && currentSessionId !== 'default') {
+          try {
+            const res = await fetch('/dsh-turn-bookmarks/turn-prompt?sessionId=' + encodeURIComponent(currentSessionId) + '&turn=' + turn)
+            if (res.ok) {
+              const data = await res.json()
+              if (data.ok && typeof data.prompt === 'string' && data.prompt) {
+                return data.prompt
+              }
+            }
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] Failed to fetch turn prompt from backend:', err)
+          }
+        }
+
+        // 3. DOM 智能属性提取兜底
+        try {
+          let domText = ''
+          for (const node of userBubble.childNodes) {
+            if (node.nodeType === Node.TEXT_NODE) {
+              domText += node.textContent
+            } else if (node instanceof HTMLElement) {
+              if (node.dataset.refChip === 'session') {
+                const title = node.getAttribute('title') || ''
+                domText += title.startsWith('@') ? title : ('@' + (node.textContent || '').trim())
+              } else {
+                domText += node.textContent || ''
+              }
+            }
+          }
+          if (domText.trim()) return domText.trim()
+        } catch {}
+
+        return userBubble.innerText.trim()
+      }
+
       async function forkAndRerunTurn(turn, newText) {
         const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
         if (!currentSessionId || currentSessionId === 'default') {
@@ -1285,7 +1512,8 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           const entries = sessionObj?.eventSource?.getSnapshot?.()?.entries
           if (Array.isArray(entries) && entries.length > 0) {
             let lastInitSeq = null
-            for (const ev of entries) {
+            for (const entry of entries) {
+              const ev = entry?.event || entry
               if (typeof ev?.seq !== 'number') continue
               if (turn === 1) {
                 if (ev.type === 'agent/inbox/spliced' || ev.type === 'user/message' || ev.type === 'turn/start') {
@@ -1305,17 +1533,17 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
 
         // 2. 服务端兜底：若客户端内存未完整命中，向服务端请求精确边界
         if (typeof atSeq !== 'number') {
-        try {
-          const res = await fetch('/dsh-turn-bookmarks/turn-boundary?sessionId=' + encodeURIComponent(currentSessionId) + '&turn=' + turn)
-          if (res.ok) {
-            const data = await res.json()
-            if (data.ok && typeof data.atSeq === 'number' && Number.isSafeInteger(data.atSeq) && data.atSeq >= 0) {
-              atSeq = data.atSeq
+          try {
+            const res = await fetch('/dsh-turn-bookmarks/turn-boundary?sessionId=' + encodeURIComponent(currentSessionId) + '&turn=' + turn)
+            if (res.ok) {
+              const data = await res.json()
+              if (data.ok && typeof data.atSeq === 'number' && Number.isSafeInteger(data.atSeq) && data.atSeq >= 0) {
+                atSeq = data.atSeq
+              }
             }
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] Failed to fetch turn boundary from backend:', err)
           }
-        } catch (err) {
-          console.warn('[dsh-turn-bookmarks] Failed to fetch turn boundary from backend:', err)
-        }
         }
 
         // 严格安全闸门：必须是明确的非负整数，任何 null / undefined 严禁放行
@@ -1383,6 +1611,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         }
         return false
       }
+      
 
       // ── Rail Marks Synchronizer (双轨架构联动) ─────────────────────────────
       function updateRailMarks() {
