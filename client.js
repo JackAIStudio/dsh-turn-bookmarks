@@ -205,7 +205,7 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
 /* ==================== 3. Dual-Rail: Left Bookmark Rail (专属左侧收藏镜像轨 - 位置 A & 形态 1) ==================== */
 .dsh-tb-left-rail {
   position: fixed !important;
-  z-index: 99 !important;
+  z-index: 12 !important;
   width: 28px !important;
   pointer-events: none !important;
   user-select: none !important;
@@ -214,20 +214,12 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
   transition: opacity 0.2s ease !important;
 }
 
-/* 垂直渐变琥珀金导轨线 (两端优雅淡隐，绝对居中穿过胶囊) */
+/* 垂直导轨线彻底移除，保持纯净留白，消除视觉噪点与穿透覆盖 */
 .dsh-tb-left-rail-guide {
-  position: absolute !important;
-  left: 50% !important;
-  transform: translateX(-50%) !important;
-  top: 0 !important;
-  bottom: 0 !important;
-  width: 1.5px !important;
-  background: linear-gradient(180deg, rgba(245, 158, 11, 0.05) 0%, rgba(245, 158, 11, 0.55) 12%, rgba(245, 158, 11, 0.55) 88%, rgba(245, 158, 11, 0.05) 100%) !important;
-  border-radius: 1px !important;
-  pointer-events: none !important;
+  display: none !important;
 }
 
-/* 纯数字微型胶囊 (形态 1：带五角星收藏标，纯数字加粗，暖金质感) */
+/* 纯数字微型胶囊 (轻量浮动书签徽标：去线化极简呼吸感，低层级安全避让) */
 .dsh-tb-left-capsule {
   position: absolute !important;
   left: 50% !important;
@@ -237,11 +229,11 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
   justify-content: center !important;
   height: 20px !important;
   min-width: 22px !important;
-  padding: 0 4px !important;
+  padding: 0 5px !important;
   border-radius: 10px !important;
   background: var(--dsw-alias-surface-overlay, #ffffff) !important;
   border: 1.5px solid #f59e0b !important;
-  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.25), 0 1px 2px rgba(0, 0, 0, 0.06) !important;
+  box-shadow: 0 2px 6px rgba(245, 158, 11, 0.2), 0 1px 2px rgba(0, 0, 0, 0.05) !important;
   color: #d97706 !important;
   font-size: 11px !important;
   font-weight: 700 !important;
@@ -249,10 +241,11 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
   cursor: pointer !important;
   transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1) !important;
   line-height: 1 !important;
-  z-index: 100 !important;
+  z-index: 13 !important;
   pointer-events: auto !important;
   user-select: none !important;
   white-space: nowrap !important;
+  opacity: 0.9 !important;
 }
 
 .dsh-tb-capsule-star {
@@ -260,10 +253,11 @@ html.dark .dsh-tb-popover-response .dsh-tb-popover-text {
 }
 
 .dsh-tb-left-capsule:hover {
+  opacity: 1 !important;
   background: #f59e0b !important;
   color: #ffffff !important;
   transform: translate(-50%, -50%) scale(1.12) !important;
-  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.5) !important;
+  box-shadow: 0 4px 14px rgba(245, 158, 11, 0.45) !important;
 }
 
 [data-ds-dark-theme] .dsh-tb-left-capsule,
@@ -272,7 +266,7 @@ html.dark .dsh-tb-left-capsule {
   background: #1c212a !important;
   border-color: #fbbf24 !important;
   color: #fbbf24 !important;
-  box-shadow: 0 0 8px rgba(251, 191, 36, 0.25) !important;
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.2) !important;
 }
 
 [data-ds-dark-theme] .dsh-tb-left-capsule:hover,
@@ -280,7 +274,7 @@ html.dark .dsh-tb-left-capsule {
 html.dark .dsh-tb-left-capsule:hover {
   background: #fbbf24 !important;
   color: #0d1117 !important;
-  box-shadow: 0 0 14px rgba(251, 191, 36, 0.6) !important;
+  box-shadow: 0 0 14px rgba(251, 191, 36, 0.5) !important;
 }
 
 /* In-message turn bookmark star button */
@@ -2029,12 +2023,9 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         leftRailEl.style.height = `${Math.round(railHeight)}px`
         leftRailEl.style.left = `${Math.max(8, leftPos)}px`
 
-        // 垂直渐变导轨线
-        if (!leftRailEl.querySelector('.dsh-tb-left-rail-guide')) {
-          const guide = document.createElement('div')
-          guide.className = 'dsh-tb-left-rail-guide'
-          leftRailEl.appendChild(guide)
-        }
+        // 清理可能遗留的旧导轨线，保持去线化极简
+        const oldGuide = leftRailEl.querySelector('.dsh-tb-left-rail-guide')
+        if (oldGuide) oldGuide.remove()
 
         // 渲染已收藏轮次胶囊（形态 1：纯数字微型胶囊，无五角星，舒展防重叠排列）
         const sorted = [...starredTurns].sort((a, b) => a - b)
