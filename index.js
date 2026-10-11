@@ -164,69 +164,141 @@ export async function getTurnBoundarySeq({ home, sessionId, turn }) {
   return matchedSeq
 }
 
-/** 精确获取某一轮的原始提示词（保留完整的 @[标题](dsh-session:...) 会话引用） */
-export async function getTurnOriginalPrompt({ home, sessionId, turn }) {
+/** 打开会话日志流：压缩日志走 `zstd -dc`，普通 jsonl 直读。 */
+function openSessionLogStream(file) {
+  if (!file.endsWith('.zstd')) return { stream: createReadStream(file), dispose: () => {} };
+  const zstdBin = process.platform === 'win32' ? 'zstd.exe' : (existsSync('/opt/homebrew/bin/zstd') ? '/opt/homebrew/bin/zstd' : 'zstd');
+  const proc = spawn(zstdBin, ['-dc', file], { stdio: ['ignore', 'pipe', 'ignore'] });
+  return { stream: proc.stdout, dispose: () => { try { proc.kill(); } catch {} } };
+}
+
+/** 会话内容块里的文本拼接（保留完整的 @[标题](dsh-session:...) 会话引用）。 */
+function textOfContentBlocks(blocks) {
+  return (blocks || [])
+    .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join(String.fromCharCode(10));
+}
+
+/** 会话内容块里的附件引用（图片 / 文件），保持消息内顺序。 */
+export function collectAttachmentRefs(blocks) {
+  const refs = [];
+  for (const block of blocks || []) {
+    if (!block || typeof block !== 'object') continue;
+    if ((block.type === 'image' || block.type === 'file') && block.attachment && typeof block.attachment === 'object') {
+      refs.push({ kind: block.type, ...block.attachment });
+    }
+  }
+  return refs;
+}
+
+/**
+ * 解析某一轮用户消息的完整内容：原始提示词 + 该消息携带的附件引用。
+ * 文本优先取 inbox 投递的原始形态（保留会话引用标记），附件取两侧非空的一侧。
+ * @returns {Promise<{ text: string, attachments: Array<object> } | null>}
+ */
+export async function getTurnContentParts({ home, sessionId, turn }) {
   const targetTurn = parseInt(turn, 10);
   if (!Number.isSafeInteger(targetTurn) || targetTurn <= 0) return null;
   const file = findSessionFile(home, sessionId);
   if (!file) return null;
-  const isCompressed = file.endsWith('.zstd');
-  let stream;
-  let proc = null;
-  if (isCompressed) {
-    const zstdBin = process.platform === 'win32' ? 'zstd.exe' : (fs.existsSync('/opt/homebrew/bin/zstd') ? '/opt/homebrew/bin/zstd' : 'zstd');
-    proc = spawn(zstdBin, ['-dc', file], { stdio: ['ignore', 'pipe', 'ignore'] });
-    stream = proc.stdout;
-  } else {
-    stream = createReadStream(file);
-  }
+  const { stream, dispose } = openSessionLogStream(file);
   const rl = readline.createInterface({ input: stream });
   let lastInboxInserted = null;
-  let turnUserMessage = null;
-  let matchedPrompt = null;
+  let inboxBlocks = null;
+  let userBlocks = null;
   let foundTargetTurn = false;
   try {
     for await (const line of rl) {
       if (!line.trim()) continue;
-      try {
-        const ev = JSON.parse(line);
-        if (ev.type === 'agent/inbox/spliced' && ev.data?.target === 'next-turn' && Array.isArray(ev.data?.inserted) && ev.data.inserted.length > 0) {
-          lastInboxInserted = ev.data.inserted;
-        }
-        if (ev.type === 'turn/start' && ev.data?.turn === targetTurn) {
-          foundTargetTurn = true;
-          if (lastInboxInserted) {
-            const textBlocks = lastInboxInserted.flatMap((item) => 
-              (item.content || []).filter((c) => c.type === 'text').map((c) => c.text)
-            );
-            if (textBlocks.length > 0) {
-              matchedPrompt = textBlocks.join(String.fromCharCode(10));
-              break;
-            }
-          }
-        }
-        if (foundTargetTurn && ev.type === 'user/message') {
-          if (ev.data?.content) {
-            const text = (ev.data.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(String.fromCharCode(10));
-            if (text) {
-              turnUserMessage = text;
-              break;
-            }
-          }
-        }
-        if (foundTargetTurn && ev.type === 'turn/end' && ev.data?.turn === targetTurn) {
-          break;
-        }
-      } catch {}
+      let ev;
+      try { ev = JSON.parse(line); } catch { continue; }
+      if (ev.type === 'agent/inbox/spliced' && ev.data?.target === 'next-turn' && Array.isArray(ev.data?.inserted) && ev.data.inserted.length > 0) {
+        lastInboxInserted = ev.data.inserted;
+      } else if (ev.type === 'agent/inbox/spliced' && ev.data?.target === 'next-turn' && Number.isSafeInteger(ev.data?.removedCount) && ev.data.removedCount > 0) {
+        // 投递已被下一轮消费：清掉快照，避免把上一轮的提示词/附件算到后面的轮次上
+        lastInboxInserted = null;
+      }
+      if (ev.type === 'turn/start' && ev.data?.turn === targetTurn) {
+        foundTargetTurn = true;
+        if (lastInboxInserted) inboxBlocks = lastInboxInserted.flatMap((item) => (item && item.content) || []);
+      }
+      if (foundTargetTurn && ev.type === 'user/message') {
+        if (Array.isArray(ev.data?.content)) userBlocks = ev.data.content;
+        break;
+      }
+      if (foundTargetTurn && ev.type === 'turn/end' && ev.data?.turn === targetTurn) break;
     }
   } finally {
     rl.close();
-    if (proc) {
-      try { proc.kill(); } catch {}
-    }
+    dispose();
   }
   if (!foundTargetTurn) return null;
-  return matchedPrompt || turnUserMessage || null;
+  const text = textOfContentBlocks(inboxBlocks) || textOfContentBlocks(userBlocks);
+  const attachments = collectAttachmentRefs(inboxBlocks);
+  if (attachments.length === 0) attachments.push(...collectAttachmentRefs(userBlocks));
+  if (text === '' && attachments.length === 0) return null;
+  return { text, attachments };
+}
+
+/** 精确获取某一轮的原始提示词（保留完整的 @[标题](dsh-session:...) 会话引用） */
+export async function getTurnOriginalPrompt({ home, sessionId, turn }) {
+  const content = await getTurnContentParts({ home, sessionId, turn });
+  if (content === null || content.text === '') return null;
+  return content.text;
+}
+
+/** 单次可携带的附件字节上限（超过时明确报错，避免把巨型文件读进内存）。 */
+export const MAX_CARRIED_ATTACHMENT_BYTES = 48 * 1024 * 1024;
+
+/** 附件 id 归一化成 sha256（不合法返回 null）。 */
+export function attachmentSha256(attachmentId) {
+  const raw = typeof attachmentId === 'string' ? attachmentId.trim() : '';
+  const sha = raw.startsWith('sha256:') ? raw.slice('sha256:'.length) : raw;
+  return /^[0-9a-f]{64}$/.test(sha) ? sha : null;
+}
+
+/** 只接受单段文件名（拒绝路径分隔符与空名），用于原样文件库的目录定位。 */
+function safeAttachmentFileName(name) {
+  if (typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  if (trimmed === '' || trimmed === '.' || trimmed === '..') return null;
+  if (/[\/\\\u0000]/.test(trimmed)) return null;
+  return trimmed;
+}
+
+/**
+ * 读取一个附件在内容寻址库里的原始字节（图片：objects/，原样文件：files/ 或 file-objects/）。
+ * 只读、只命中本 home 的附件库；找不到返回 null。
+ */
+export function readAttachmentBytes(home, attachmentId, nameHint) {
+  const sha = attachmentSha256(attachmentId);
+  if (sha === null) return null;
+  const root = join(home, 'attachments', 'v1');
+  const objectPath = join(root, 'objects', sha.slice(0, 2), sha);
+  if (existsSync(objectPath)) return readFileSync(objectPath);
+  const fileDir = join(root, 'files', sha.slice(0, 2), sha);
+  if (existsSync(fileDir)) {
+    const hint = safeAttachmentFileName(nameHint);
+    if (hint !== null && existsSync(join(fileDir, hint))) return readFileSync(join(fileDir, hint));
+    try {
+      const entries = readdirSync(fileDir);
+      if (entries.length === 1) return readFileSync(join(fileDir, entries[0]));
+    } catch {}
+  }
+  const fileObjectPath = join(root, 'file-objects', sha.slice(0, 2), sha);
+  if (existsSync(fileObjectPath)) return readFileSync(fileObjectPath);
+  return null;
+}
+
+/** 嗅探栅格图片类型；不是可识别的图片返回 undefined。 */
+export function sniffImageMediaType(bytes) {
+  if (!Buffer.isBuffer(bytes) || bytes.length < 12) return undefined;
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  if (bytes.subarray(0, 3).toString('ascii') === 'GIF') return 'image/gif';
+  return undefined;
 }
 
 /**
@@ -458,4 +530,72 @@ export function apply(ctx) {
       }
     },
   }), 'dsh-turn-bookmarks: turn-prompt');
+
+  // 6. 某一轮用户消息的完整内容（文本 + 附件引用）——Prompt Edit & Fork Rerun 的宿主侧兜底
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: '/dsh-turn-bookmarks/turn-content',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        res.setHeader('allow', 'GET')
+        return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+      }
+      const url = new URL(req.url, 'http://127.0.0.1')
+      const sid = (url.searchParams.get('sessionId') || '').trim()
+      const turn = parseInt(url.searchParams.get('turn') || '', 10)
+      if (!sid || !Number.isSafeInteger(turn) || turn <= 0) {
+        return sendJson(res, 400, { ok: false, error: 'invalid sessionId or turn' })
+      }
+      try {
+        const content = await getTurnContentParts({ home: resolveDshHome(), sessionId: sid, turn })
+        if (content === null) {
+          return sendJson(res, 404, { ok: false, error: 'turn content not found' })
+        }
+        return sendJson(res, 200, { ok: true, sessionId: sid, turn, prompt: content.text, attachments: content.attachments })
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message })
+      }
+    },
+  }), 'dsh-turn-bookmarks: turn-content')
+
+  // 7. 附件字节读取——Prompt Edit & Fork Rerun 时把原消息的图片/附件一并带进新分支
+  ctx.effect(() => webServer.register({
+    kind: 'exact',
+    path: '/dsh-turn-bookmarks/attachment',
+    handler: async (req, res) => {
+      if (req.method !== 'GET') {
+        res.setHeader('allow', 'GET')
+        return sendJson(res, 405, { ok: false, error: 'method not allowed' })
+      }
+      const url = new URL(req.url, 'http://127.0.0.1')
+      const attachmentId = (url.searchParams.get('attachmentId') || '').trim()
+      const nameHint = url.searchParams.get('name') || ''
+      if (attachmentSha256(attachmentId) === null) {
+        return sendJson(res, 400, { ok: false, error: 'invalid attachmentId' })
+      }
+      try {
+        const bytes = readAttachmentBytes(resolveDshHome(), attachmentId, nameHint)
+        if (bytes === null) {
+          return sendJson(res, 404, { ok: false, error: 'attachment is not present in the local store' })
+        }
+        if (bytes.length > MAX_CARRIED_ATTACHMENT_BYTES) {
+          return sendJson(res, 413, {
+            ok: false,
+            error: `attachment too large to carry automatically (${bytes.length} bytes)`,
+          })
+        }
+        const mediaType = sniffImageMediaType(bytes)
+        return sendJson(res, 200, {
+          ok: true,
+          attachmentId,
+          name: nameHint,
+          bytes: bytes.length,
+          ...(mediaType === undefined ? {} : { mediaType }),
+          data: bytes.toString('base64'),
+        })
+      } catch (err) {
+        return sendJson(res, 500, { ok: false, error: err.message })
+      }
+    },
+  }), 'dsh-turn-bookmarks: attachment')
 }

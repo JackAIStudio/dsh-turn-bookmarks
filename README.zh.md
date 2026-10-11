@@ -17,9 +17,14 @@ DSH Web GUI 原生 Turn Rail（轮次导航轨）深度赋能插件：**100% 融
   - 存储位置跟随**当前实例的 harness home**（与 DSH 核心同一套规则：`DSH_HOME` 优先，否则 `~/.dsh`）：`<DSH_HOME>/turn-bookmarks.json`。同一台机器上并存多个实例（如 `dsh web --port 3080` 与 JackDSH 桌面端）时，各写各的，互不混用。
   - 旧版本曾把路径写死为 `~/.dsh`；升级后首次启动会把"会话确实属于本 home"的条目自动搬回，其余实例的收藏原样保留（幂等）。
 - **原生明暗主题自适应**：无缝跟随 DSH Web 浅色与深色模式。
+- **编辑并从此轮重新运行（附件随行）**：用户消息行上的 ✏️ 按钮打开内联编辑器，保存后从该轮**之前**的分界点 fork 出新分支并重新提交编辑后的提示词。原消息携带的**图片与文件附件会一起带进新分支**：
+  - 编辑器顶部新增「带上附件」条，列出将被携带的图片缩略图 / 文件卡片，可逐个 `×` 移除；读不出来的附件会标红并在提交前弹确认。
+  - 图片走官方 `session.readAttachment` 读回字节（内容寻址，重跑后与原消息 **attachmentId 完全一致**）；原样文件走宿主路由 `/dsh-turn-bookmarks/attachment` 从 `<DSH_HOME>/attachments/v1` 读回字节。
+  - 提交优先走会话服务 `conversation.createDrafts + sendSession`（文本 + 附件一次提交）；不可用时回退到作曲器路径（先合成 paste 注入附件，再走原有输入框发送）。
+  - 宿主侧新增路由：`/dsh-turn-bookmarks/turn-content`（某一轮的文本 + 附件引用）与 `/dsh-turn-bookmarks/attachment`（按 attachmentId 读取字节，48 MiB 上限）。
 
 ## 测试
 
 ```bash
-npm test   # home 解析 / 旧路径搬家 / 收藏会话隔离
+npm test   # home 解析 / 旧路径搬家 / 收藏会话隔离 / 轮次边界与提示词 / 轮次附件解析与附件字节读取
 ```

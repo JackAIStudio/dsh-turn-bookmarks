@@ -698,6 +698,82 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
   gap: 8px !important;
 }
 
+/* ── 附件携带条（Prompt Edit & Fork Rerun） ── */
+.dsh-tb-attach-bar {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 2px 2px 0 !important;
+}
+
+.dsh-tb-attach-label {
+  font-size: 11.5px !important;
+  color: var(--dsw-alias-label-tertiary, #64748b) !important;
+  user-select: none !important;
+  flex: none !important;
+}
+
+.dsh-tb-attach-chip {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  max-width: 240px !important;
+  padding: 2px 6px 2px 3px !important;
+  border-radius: 6px !important;
+  border: 1px solid var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.25)) !important;
+  background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.06)) !important;
+  font-size: 11.5px !important;
+  color: var(--dsw-alias-label-secondary, #94a3b8) !important;
+}
+
+.dsh-tb-attach-chip[data-missing] {
+  border-color: var(--dsw-alias-state-error-primary, #dc2626) !important;
+  color: var(--dsw-alias-state-error-primary, #dc2626) !important;
+}
+
+.dsh-tb-attach-thumb {
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 4px !important;
+  object-fit: cover !important;
+  display: block !important;
+  flex: none !important;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
+}
+
+.dsh-tb-attach-icon {
+  width: 22px !important;
+  height: 22px !important;
+  border-radius: 4px !important;
+  display: grid !important;
+  place-items: center !important;
+  flex: none !important;
+  font-size: 12px !important;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
+}
+
+.dsh-tb-attach-name {
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+}
+
+.dsh-tb-attach-close {
+  flex: none !important;
+  cursor: pointer !important;
+  padding: 0 3px !important;
+  border-radius: 3px !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  color: var(--dsw-alias-label-tertiary, #64748b) !important;
+}
+
+.dsh-tb-attach-close:hover {
+  color: var(--dsw-alias-state-error-primary, #dc2626) !important;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
+}
+
 .dsh-tb-btn {
   padding: 5px 14px !important;
   border-radius: 6px !important;
@@ -1088,6 +1164,14 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           .replace(/'/g, '&#039;')
       }
 
+      /** 附件体积的可读文本（用于携带条上的提示）。 */
+      function formatAttachmentBytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes < 0) return ''
+        if (bytes < 1024) return `${bytes} B`
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+      }
+
       function reloadBookmarks() {
         // 关键：这次同步绑定"发起请求时"的会话 id。
         // 旧实现在响应回来时读的是全局 activeSessionId —— 只要用户在这段时间里切换了会话，
@@ -1248,6 +1332,20 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         refChipsWrap.style.display = 'contents'
         refBar.appendChild(refChipsWrap)
 
+        // 附件携带区：显示这次「重新运行」会一起带进新分支的图片 / 附件（可逐个移除）
+        const attachBar = document.createElement('div')
+        attachBar.className = 'dsh-tb-attach-bar'
+        attachBar.style.display = 'none'
+
+        const attachLabel = document.createElement('span')
+        attachLabel.className = 'dsh-tb-attach-label'
+        attachLabel.textContent = '带上附件：'
+        attachBar.appendChild(attachLabel)
+
+        const attachChipsWrap = document.createElement('div')
+        attachChipsWrap.style.display = 'contents'
+        attachBar.appendChild(attachChipsWrap)
+
         const textarea = document.createElement('textarea')
         textarea.className = 'dsh-tb-editor-textarea'
         textarea.value = fallbackText
@@ -1285,6 +1383,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         footer.appendChild(btns)
 
         editor.appendChild(refBar)
+        editor.appendChild(attachBar)
         editor.appendChild(textarea)
         editor.appendChild(footer)
 
@@ -1296,6 +1395,60 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         // 会话引用的状态存储：[{ label, uri, mention }]
         let activeReferences = []
         let rawOriginalPrompt = fallbackText
+
+        // 附件携带状态：本轮原消息的图片/附件。重跑时逐个读回字节，随提示词一起进新分支。
+        // 结构：{ kind, attachmentId, name, mediaType, width, height, bytes, previewUrl, cachedBytes, missing }
+        let carriedAttachments = []
+
+        const renderAttachChips = () => {
+          attachChipsWrap.innerHTML = ''
+          if (carriedAttachments.length === 0) {
+            attachBar.style.display = 'none'
+            return
+          }
+          attachBar.style.display = 'flex'
+          for (const item of carriedAttachments) {
+            const name = item.name || (item.kind === 'image' ? '图片' : '附件')
+            const dims = item.kind === 'image' && Number.isSafeInteger(item.width) && Number.isSafeInteger(item.height)
+              ? ` ${item.width}×${item.height}`
+              : (Number.isSafeInteger(item.bytes) ? ` ${formatAttachmentBytes(item.bytes)}` : '')
+
+            const chip = document.createElement('span')
+            chip.className = 'dsh-tb-attach-chip'
+            chip.title = `${name}${dims}` + (item.missing ? '（本地已找不到该附件，重跑时会跳过）' : '')
+            if (item.missing) chip.dataset.missing = '1'
+
+            if (item.kind === 'image' && typeof item.previewUrl === 'string' && item.previewUrl !== '') {
+              const thumb = document.createElement('img')
+              thumb.className = 'dsh-tb-attach-thumb'
+              thumb.src = item.previewUrl
+              thumb.alt = name
+              chip.appendChild(thumb)
+            } else {
+              const icon = document.createElement('span')
+              icon.className = 'dsh-tb-attach-icon'
+              icon.textContent = item.kind === 'image' ? '🖼' : '📄'
+              chip.appendChild(icon)
+            }
+
+            const nameEl = document.createElement('span')
+            nameEl.className = 'dsh-tb-attach-name'
+            nameEl.textContent = name
+            chip.appendChild(nameEl)
+
+            const delBtn = document.createElement('span')
+            delBtn.className = 'dsh-tb-attach-close'
+            delBtn.textContent = '×'
+            delBtn.title = '这次重跑不带这个附件'
+            delBtn.addEventListener('click', (e) => {
+              e.stopPropagation()
+              carriedAttachments = carriedAttachments.filter((candidate) => candidate !== item)
+              renderAttachChips()
+            })
+            chip.appendChild(delBtn)
+            attachChipsWrap.appendChild(chip)
+          }
+        }
 
         const renderRefChips = () => {
           refChipsWrap.innerHTML = ''
@@ -1333,7 +1486,8 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         // 异步解析底层真实的原始提示词与气泡引用
         ;(async () => {
           try {
-            const prompt = await resolveTurnPrompt(turn, userBubble)
+            const content = await resolveTurnContent(turn, userBubble)
+            const prompt = content && typeof content.text === 'string' ? content.text : ''
             if (prompt) {
               rawOriginalPrompt = prompt
               const SESSION_MENTION_RE = /@\[((?:\.|[^\]])*)\]\((dsh-session:[A-Za-z0-9_-]+)\)|(dsh-session:[A-Za-z0-9_-]+)/gu
@@ -1365,17 +1519,51 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
                 autoResize()
               }
             }
+
+            // 原消息带的图片 / 附件：显示在携带条上，重跑时一并送进新分支
+            const attachments = content && Array.isArray(content.attachments) ? content.attachments : []
+            if (attachments.length > 0) {
+              carriedAttachments = attachments.map((item) => ({ ...item }))
+              renderAttachChips()
+              // 图片先取字节：既做缩略图，也是重跑时要发送的同一份内容
+              for (const item of carriedAttachments) {
+                if (item.kind !== 'image') continue
+                prefetchCarriedImage(item).then(() => {
+                  if (document.body.contains(editor)) renderAttachChips()
+                })
+              }
+            }
           } catch (err) {
             console.warn('[dsh-turn-bookmarks] Failed to resolve accurate turn prompt:', err)
           }
         })()
 
+        /** 回收携带条自建的缩略图 blob URL（编辑器关闭时调用；图片字节已缓存在 item 上）。 */
+        const releaseCarriedPreviews = () => {
+          for (const item of carriedAttachments) {
+            if (item.previewIsObjectUrl && typeof item.previewUrl === 'string' && item.previewUrl.startsWith('blob:')) {
+              try {
+                URL.revokeObjectURL(item.previewUrl)
+              } catch {}
+              item.previewIsObjectUrl = false
+            }
+          }
+        }
+
         const closeEditor = () => {
           editor.remove()
           userBubble.style.display = ''
+          releaseCarriedPreviews()
         }
 
         cancelBtn.addEventListener('click', closeEditor)
+
+        const restoreControls = () => {
+          runBtn.disabled = false
+          cancelBtn.disabled = false
+          textarea.disabled = false
+          runBtn.textContent = '重新运行'
+        }
 
         const doSubmit = async () => {
           const editedText = textarea.value.trim()
@@ -1386,7 +1574,6 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           runBtn.disabled = true
           cancelBtn.disabled = true
           textarea.disabled = true
-          runBtn.textContent = '正在分叉...'
 
           try {
             // 合成符合 DSH 会话要求的完整带有气泡引用的提示词
@@ -1401,14 +1588,33 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
               }
             }
 
-            await forkAndRerunTurn(turn, fullText)
+            // 原消息带的图片 / 附件：读回字节，和编辑后的提示词一起进新分支
+            let files = []
+            const carried = carriedAttachments.slice()
+            if (carried.length > 0) {
+              runBtn.textContent = '正在读取附件...'
+              const collected = await collectCarriedFiles(carried)
+              files = collected.files
+              if (collected.failed.length > 0) {
+                const names = collected.failed
+                  .map((item) => item.name || (item.kind === 'image' ? '图片' : '附件'))
+                  .join('、')
+                const proceed = window.confirm(
+                  `有 ${collected.failed.length} 个附件读取失败：${names}\n继续重跑将不会带上这些附件，是否继续？`,
+                )
+                if (!proceed) {
+                  restoreControls()
+                  return
+                }
+              }
+            }
+
+            runBtn.textContent = '正在分叉...'
+            await forkAndRerunTurn(turn, fullText, files)
             closeEditor()
           } catch (err) {
             console.error('[dsh-turn-bookmarks] Fork & rerun failed:', err)
-            runBtn.disabled = false
-            cancelBtn.disabled = false
-            textarea.disabled = false
-            runBtn.textContent = '重新运行'
+            restoreControls()
             alert('从此处重新运行失败：' + (err.message || String(err)))
           }
         }
@@ -1426,55 +1632,103 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         })
       }
 
-      async function resolveTurnPrompt(turn, userBubble) {
+      const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+      /** 会话内容块里的附件引用（图片 / 文件），保持消息内顺序。 */
+      function attachmentRefsOfContent(blocks) {
+        const refs = []
+        for (const block of blocks || []) {
+          if (!block || typeof block !== 'object') continue
+          if ((block.type === 'image' || block.type === 'file') && block.attachment && typeof block.attachment === 'object') {
+            refs.push({ kind: block.type, ...block.attachment })
+          }
+        }
+        return refs
+      }
+
+      /** 内容块里的文本拼接（保留 @[标题](dsh-session:...) 会话引用标记）。 */
+      function textOfContentBlocks(blocks) {
+        return (blocks || [])
+          .filter((block) => block && block.type === 'text' && typeof block.text === 'string')
+          .map((block) => block.text)
+          .join(String.fromCharCode(10))
+      }
+
+      /**
+       * 解析某一轮用户消息的完整内容：原始提示词 + 该消息携带的附件引用。
+       * 顺序：客户端内存 → 宿主 /turn-content → DOM 属性兜底。
+       * @returns {Promise<{ text: string, attachments: Array<object> }>}
+       */
+      async function resolveTurnContent(turn, userBubble) {
         const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
 
-        // 1. 本地内存优先：直接从客户端 session 的 eventSource 提取完整的带有 @[标题](dsh-session:...) 的原始 prompt
+        // 1. 本地内存优先：直接从客户端 session 的 eventSource 提取完整内容
         try {
           const sessionObj = sessionsRef?.binding?.(currentSessionId)?.session
           const entries = sessionObj?.eventSource?.getSnapshot?.()?.entries
           if (Array.isArray(entries) && entries.length > 0) {
             let lastInboxInserted = null
+            let foundTargetTurn = false
+            let inboxBlocks = null
+            const settleFromMemory = (userBlocks) => {
+              const text = textOfContentBlocks(inboxBlocks) || textOfContentBlocks(userBlocks)
+              const attachments = attachmentRefsOfContent(inboxBlocks)
+              if (attachments.length === 0) attachments.push(...attachmentRefsOfContent(userBlocks))
+              if (text === '' && attachments.length === 0) return null
+              return { text, attachments }
+            }
             for (const entry of entries) {
               const ev = entry?.event || entry
               if (!ev || typeof ev.type !== 'string') continue
               if (ev.type === 'agent/inbox/spliced' && ev.data?.target === 'next-turn' && Array.isArray(ev.data?.inserted) && ev.data.inserted.length > 0) {
                 lastInboxInserted = ev.data.inserted
+              } else if (ev.type === 'agent/inbox/spliced' && ev.data?.target === 'next-turn' && Number.isSafeInteger(ev.data?.removedCount) && ev.data.removedCount > 0) {
+                // 投递已被消费：清掉快照，避免把上一轮的提示词/附件算到后面的轮次上
+                lastInboxInserted = null
               }
               if (ev.type === 'turn/start' && ev.data?.turn === turn) {
-                if (lastInboxInserted) {
-                  const textBlocks = lastInboxInserted.flatMap((item) =>
-                    (item.content || []).filter((c) => c.type === 'text').map((c) => c.text)
-                  )
-                  if (textBlocks.length > 0) {
-                    return textBlocks.join(String.fromCharCode(10))
-                  }
-                }
+                foundTargetTurn = true
+                inboxBlocks = lastInboxInserted
+                  ? lastInboxInserted.flatMap((item) => (item && item.content) || [])
+                  : []
+              }
+              if (foundTargetTurn && ev.type === 'user/message') {
+                const settle = settleFromMemory(Array.isArray(ev.data?.content) ? ev.data.content : [])
+                if (settle) return settle
+              }
+              if (foundTargetTurn && ev.type === 'turn/end' && ev.data?.turn === turn) {
+                const settle = settleFromMemory(null)
+                if (settle) return settle
+                break
               }
             }
           }
         } catch (err) {
-          console.warn('[dsh-turn-bookmarks] Failed to resolve prompt from client memory:', err)
+          console.warn('[dsh-turn-bookmarks] Failed to resolve turn content from client memory:', err)
         }
 
-        // 2. 服务端精准提取
+        // 2. 服务端精准提取（文本 + 附件引用）
         if (currentSessionId && currentSessionId !== 'default') {
           try {
-            const res = await fetch('/dsh-turn-bookmarks/turn-prompt?sessionId=' + encodeURIComponent(currentSessionId) + '&turn=' + turn)
+            const res = await fetch(`/dsh-turn-bookmarks/turn-content?sessionId=${encodeURIComponent(currentSessionId)}&turn=${turn}`)
             if (res.ok) {
               const data = await res.json()
-              if (data.ok && typeof data.prompt === 'string' && data.prompt) {
-                return data.prompt
+              if (data && data.ok) {
+                const text = typeof data.prompt === 'string' ? data.prompt : ''
+                const attachments = Array.isArray(data.attachments) ? data.attachments : []
+                if (text || attachments.length > 0) return { text, attachments }
               }
+            } else if (res.status !== 404) {
+              console.warn('[dsh-turn-bookmarks] turn-content route unavailable:', res.status)
             }
           } catch (err) {
-            console.warn('[dsh-turn-bookmarks] Failed to fetch turn prompt from backend:', err)
+            console.warn('[dsh-turn-bookmarks] Failed to fetch turn content from backend:', err)
           }
         }
 
-        // 3. DOM 智能属性提取兜底
+        // 3. DOM 兜底：正文照旧；图片从气泡缩略图推断（没有 attachmentId，靠预览图字节兜底）
+        let domText = ''
         try {
-          let domText = ''
           for (const node of userBubble.childNodes) {
             if (node.nodeType === Node.TEXT_NODE) {
               domText += node.textContent
@@ -1487,13 +1741,157 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
               }
             }
           }
-          if (domText.trim()) return domText.trim()
+          domText = domText.trim()
+        } catch {}
+        if (!domText) {
+          try { domText = userBubble.innerText.trim() } catch {}
+        }
+
+        const domAttachments = []
+        try {
+          const scope = userBubble.closest('[class*="userRow"], [class*="userStack"]') || userBubble.parentElement
+          const seen = new Set()
+          for (const img of scope ? Array.from(scope.querySelectorAll('img')) : []) {
+            if (img.closest('button')) continue
+            const src = img.currentSrc || img.src
+            if (!src || seen.has(src)) continue
+            seen.add(src)
+            domAttachments.push({ kind: 'image', name: img.alt || '图片', previewUrl: src })
+          }
         } catch {}
 
-        return userBubble.innerText.trim()
+        return { text: domText, attachments: domAttachments }
       }
 
-      async function forkAndRerunTurn(turn, newText) {
+      /** 找出已加载的会话服务（conversation）：附件与提示词一次提交。 */
+      function getConversationService() {
+        try {
+          return ctx.get('conversation') || ctx.get('@deepseek-ai/dsh-client-ui-conversation') || null
+        } catch {
+          return null
+        }
+      }
+
+      /** base64 → Uint8Array（逐字节，避免大图展开成巨型字符串数组）。 */
+      function base64ToBytes(base64) {
+        const binary = atob(base64)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+        return bytes
+      }
+
+      /** 官方会话接口读取本会话引用的图片字节（无需宿主新路由）。 */
+      async function readCarriedImageViaSession(sessionId, attachmentId) {
+        try {
+          const sessionObj = sessionsRef?.binding?.(sessionId)?.session
+          if (!sessionObj || typeof sessionObj.readAttachment !== 'function') return null
+          const result = await sessionObj.readAttachment(attachmentId)
+          if (result && result.ok && result.value && result.value.data && result.value.data.length > 0) {
+            return {
+              bytes: result.value.data,
+              mediaType: result.value.attachment && result.value.attachment.mediaType,
+              name: result.value.attachment && result.value.attachment.name,
+            }
+          }
+        } catch (err) {
+          console.warn('[dsh-turn-bookmarks] readAttachment failed:', err)
+        }
+        return null
+      }
+
+      /** 宿主附件路由读取字节（覆盖原样文件；图片也可兜底）。 */
+      async function fetchCarriedAttachment(sessionId, item) {
+        if (!item || !item.attachmentId) return null
+        const url = `/dsh-turn-bookmarks/attachment?sessionId=${encodeURIComponent(sessionId || '')}&attachmentId=${encodeURIComponent(item.attachmentId)}&name=${encodeURIComponent(item.name || '')}`
+        const res = await fetch(url)
+        if (!res.ok) return null
+        const data = await res.json()
+        if (!data || !data.ok || typeof data.data !== 'string') return null
+        return { bytes: base64ToBytes(data.data), mediaType: data.mediaType, name: data.name || item.name }
+      }
+
+      /** 打开编辑器后取回图片字节：做缩略图，并缓存给重跑复用。 */
+      async function prefetchCarriedImage(item) {
+        if (!item || item.kind !== 'image') return
+        const sessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
+        try {
+          let payload = null
+          if (item.attachmentId) payload = await readCarriedImageViaSession(sessionId, item.attachmentId)
+          if (!payload && item.attachmentId) payload = await fetchCarriedAttachment(sessionId, item)
+          if (!payload && item.previewUrl) {
+            const res = await fetch(item.previewUrl)
+            if (res.ok) {
+              const blob = await res.blob()
+              payload = { bytes: new Uint8Array(await blob.arrayBuffer()), mediaType: blob.type || item.mediaType }
+            }
+          }
+          if (!payload || !payload.bytes || payload.bytes.length === 0) {
+            item.missing = true
+            return
+          }
+          item.cachedBytes = payload.bytes
+          if (payload.mediaType) item.mediaType = payload.mediaType
+          if (payload.name && !item.name) item.name = payload.name
+          if (!item.previewUrl) {
+            item.previewUrl = URL.createObjectURL(new Blob([payload.bytes], { type: item.mediaType || 'image/png' }))
+            item.previewIsObjectUrl = true
+          }
+        } catch (err) {
+          console.warn('[dsh-turn-bookmarks] Failed to prefetch carried image:', err)
+        }
+      }
+
+      /** 把一个携带附件读成浏览器 File（图片优先官方接口，文件走宿主路由）。 */
+      async function buildCarriedFile(sessionId, item) {
+        const name = item.name || (item.kind === 'image' ? 'image.png' : 'file')
+        if (item.cachedBytes && item.cachedBytes.length > 0) {
+          return new File([item.cachedBytes], name, { type: item.mediaType || 'application/octet-stream' })
+        }
+        if (item.kind === 'image' && item.attachmentId) {
+          const payload = await readCarriedImageViaSession(sessionId, item.attachmentId)
+          if (payload && payload.bytes && payload.bytes.length > 0) {
+            item.cachedBytes = payload.bytes
+            if (payload.mediaType) item.mediaType = payload.mediaType
+            return new File([payload.bytes], payload.name || name, { type: item.mediaType || 'image/png' })
+          }
+        }
+        if (item.attachmentId) {
+          const payload = await fetchCarriedAttachment(sessionId, item)
+          if (payload && payload.bytes && payload.bytes.length > 0) {
+            item.cachedBytes = payload.bytes
+            if (payload.mediaType) item.mediaType = payload.mediaType
+            return new File([payload.bytes], payload.name || name, { type: item.mediaType || 'application/octet-stream' })
+          }
+        }
+        if (item.kind === 'image' && item.previewUrl) {
+          const res = await fetch(item.previewUrl)
+          if (res.ok) {
+            const blob = await res.blob()
+            if (blob.size > 0) return new File([blob], name, { type: blob.type || 'image/png' })
+          }
+        }
+        return null
+      }
+
+      /** 读全部携带附件；读不出来的单独交回调用方决定。 */
+      async function collectCarriedFiles(items) {
+        const sessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
+        const files = []
+        const failed = []
+        for (const item of items) {
+          try {
+            const file = await buildCarriedFile(sessionId, item)
+            if (file) files.push(file)
+            else failed.push(item)
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] Failed to read carried attachment:', err)
+            failed.push(item)
+          }
+        }
+        return { files, failed }
+      }
+
+      async function forkAndRerunTurn(turn, newText, files = []) {
         const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
         if (!currentSessionId || currentSessionId === 'default') {
           throw new Error('未找到当前活跃会话 ID')
@@ -1566,41 +1964,194 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           sessionsRef.select(childId)
         }
 
-        submitPromptWhenReady(newText)
+        // 原消息带的图片 / 附件一起进新分支：优先走会话服务一次提交（文本 + 附件）
+        if (files.length > 0) {
+          const sent = await trySendViaConversation(childId, newText, files)
+          if (sent) return
+          console.warn('[dsh-turn-bookmarks] 会话服务未完成提交，回退作曲器路径（会先注入附件再发送）')
+        }
+
+        const submitted = await submitPromptWhenReady(newText, files)
+        if (!submitted) {
+          throw new Error(
+            files.length > 0
+              ? '新分支已就绪，但附件未能进入输入框，已放弃自动发送（请手动附加后重发）'
+              : '新分支已就绪，但输入框未就绪，请手动发送提示词',
+          )
+        }
       }
 
-      async function submitPromptWhenReady(text) {
-        for (let i = 0; i < 40; i++) {
-          await new Promise((r) => setTimeout(r, 120))
-          const composer = document.querySelector('div[data-composer-input], [data-composer-input], div[contenteditable="true"], div[contenteditable]')
-          if (composer && composer.isConnected) {
-            try {
-              composer.focus()
-              composer.innerHTML = ''
-              document.execCommand('insertText', false, text)
-              composer.dispatchEvent(new Event('input', { bubbles: true }))
+      /** 等子会话在客户端就绪（binding 出现），拿到可直接发消息的会话对象。 */
+      async function waitForSessionBinding(sessionId, timeoutMs = 8000) {
+        const deadline = Date.now() + timeoutMs
+        for (;;) {
+          try {
+            const sessionObj = sessionsRef?.binding?.(sessionId)?.session
+            if (sessionObj && typeof sessionObj.prompt === 'function') return sessionObj
+          } catch {}
+          if (Date.now() >= deadline) return null
+          await sleep(150)
+        }
+      }
 
-              await new Promise((r) => setTimeout(r, 100))
+      /** 等文件类草稿的后台上传结束（图片不发上传请求）。 */
+      async function waitForDraftUploads(conversation, drafts, timeoutMs = 120000) {
+        const fileDrafts = drafts.filter((draft) => draft && draft.kind === 'file')
+        if (fileDrafts.length === 0) return
+        const deadline = Date.now() + timeoutMs
+        for (;;) {
+          const uploads = conversation.fileUploads?.getSnapshot?.() || {}
+          let pending = 0
+          for (const draft of fileDrafts) {
+            const state = uploads[draft.id]
+            if (state && state.status === 'ready') continue
+            if (state && state.status === 'error') throw new Error(state.message || '附件上传失败')
+            pending += 1
+          }
+          if (pending === 0) return
+          if (Date.now() >= deadline) throw new Error('附件上传超时')
+          await sleep(150)
+        }
+      }
 
-              const card = document.querySelector('[data-composer-card]') || composer.closest('[class*="card"]') || document
-              const sendBtn = card.querySelector('button[aria-label*="发送"], button[aria-label*="Send"], button[class*="primary"]:not(:disabled)')
-              if (sendBtn && !sendBtn.disabled) {
-                sendBtn.click()
-                return true
-              }
-
-              composer.dispatchEvent(new KeyboardEvent('keydown', {
-                key: 'Enter',
-                code: 'Enter',
-                keyCode: 13,
-                which: 13,
-                bubbles: true,
-                cancelable: true
-              }))
-              return true
-            } catch (err) {
-              console.warn('[dsh-turn-bookmarks] Auto-submit prompt error:', err)
+      /** 自检：子会话是否已经收下这次提交（避免回退路径重复发送）。 */
+      function childSessionHasPrompt(sessionObj, text) {
+        try {
+          const entries = sessionObj?.eventSource?.getSnapshot?.()?.entries
+          if (!Array.isArray(entries) || entries.length === 0) return false
+          for (let i = entries.length - 1; i >= 0 && i >= entries.length - 40; i -= 1) {
+            const ev = entries[i]?.event || entries[i]
+            if (ev && ev.type === 'user/message' && Array.isArray(ev.data?.content)) {
+              const joined = textOfContentBlocks(ev.data.content)
+              if (joined !== '' && joined.includes(text.trim().slice(0, 60))) return true
             }
+          }
+        } catch {}
+        return false
+      }
+
+      /**
+       * 附件随行主通道：经会话服务把「文本 + 附件」一次提交进新分支。
+       * 失败返回 false（草稿已释放），由调用方回退到作曲器路径。
+       * 调试开关：`window.__dshTurnBookmarksForceComposerFallback = true` 可强制走回退路径（用于验收回退分支）。
+       */
+      async function trySendViaConversation(childId, text, files) {
+        if (window.__dshTurnBookmarksForceComposerFallback === true) return false
+        const conversation = getConversationService()
+        if (
+          !conversation ||
+          typeof conversation.createDrafts !== 'function' ||
+          typeof conversation.sendSession !== 'function'
+        ) {
+          return false
+        }
+        const sessionObj = await waitForSessionBinding(childId)
+        if (!sessionObj) return false
+        let drafts = null
+        try {
+          drafts = conversation.createDrafts(childId, files)
+          const ids = drafts.map((draft) => draft.id)
+          await waitForDraftUploads(conversation, drafts)
+          const outcome = await conversation.sendSession(sessionObj, text, ids, 'queue')
+          if (outcome && outcome.kind === 'success') return true
+          console.warn('[dsh-turn-bookmarks] conversation.sendSession did not settle as success:', outcome)
+        } catch (err) {
+          console.warn('[dsh-turn-bookmarks] Conversation send with attachments failed, falling back:', err)
+        }
+        // 提交可能已经落地但回执丢失：先自检，避免回退路径重复发一条
+        await sleep(400)
+        if (childSessionHasPrompt(sessionObj, text)) return true
+        try {
+          if (drafts) conversation.releaseDraftAttachments?.(drafts)
+        } catch (err) {
+          console.warn('[dsh-turn-bookmarks] Failed to release draft attachments:', err)
+        }
+        return false
+      }
+
+      /** 把文件合成一次粘贴投给作曲器，让它走标准的附件接收流程。 */
+      async function stageFilesIntoComposer(composer, files) {
+        const conversation = getConversationService()
+        let before = null
+        try {
+          before = conversation?.draftAttachments?.size ?? null
+        } catch {}
+        const domCount = () => document.querySelectorAll(
+          '[data-composer-card] [class*="fileCard"], [data-composer-card] [class*="imageItem"], [data-composer-card] [class*="attachment"] img',
+        ).length
+        let domBefore = 0
+        try {
+          domBefore = domCount()
+        } catch {}
+        const dataTransfer = new DataTransfer()
+        for (const file of files) dataTransfer.items.add(file)
+        composer.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dataTransfer,
+        }))
+        const deadline = Date.now() + 4000
+        for (;;) {
+          if (before !== null) {
+            let size = null
+            try {
+              size = conversation?.draftAttachments?.size ?? null
+            } catch {}
+            if (size !== null && size >= before + files.length) return true
+          }
+          try {
+            if (domCount() >= domBefore + files.length) return true
+          } catch {}
+          if (Date.now() >= deadline) return false
+          await sleep(100)
+        }
+      }
+
+      async function submitPromptWhenReady(text, files = []) {
+        for (let i = 0; i < 40; i++) {
+          await sleep(120)
+          const composer = document.querySelector('div[data-composer-input], [data-composer-input], div[contenteditable="true"], div[contenteditable]')
+          if (!composer || !composer.isConnected) continue
+
+          try {
+            composer.focus()
+          } catch {}
+
+          if (files.length > 0) {
+            let staged = false
+            try {
+              staged = await stageFilesIntoComposer(composer, files)
+            } catch (err) {
+              console.warn('[dsh-turn-bookmarks] 附件注入作曲器失败:', err)
+            }
+            if (!staged) return false
+          }
+
+          try {
+            composer.innerHTML = ''
+            document.execCommand('insertText', false, text)
+            composer.dispatchEvent(new Event('input', { bubbles: true }))
+
+            await sleep(100)
+
+            const card = document.querySelector('[data-composer-card]') || composer.closest('[class*="card"]') || document
+            const sendBtn = card.querySelector('button[aria-label*="发送"], button[aria-label*="Send"], button[class*="primary"]:not(:disabled)')
+            if (sendBtn && !sendBtn.disabled) {
+              sendBtn.click()
+              return true
+            }
+
+            composer.dispatchEvent(new KeyboardEvent('keydown', {
+              key: 'Enter',
+              code: 'Enter',
+              keyCode: 13,
+              which: 13,
+              bubbles: true,
+              cancelable: true
+            }))
+            return true
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] Auto-submit prompt error:', err)
           }
         }
         return false
