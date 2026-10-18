@@ -1279,7 +1279,6 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
               toggleBookmark(turn)
             }
             starBtn.addEventListener('click', onToggle, { capture: true })
-            starBtn.addEventListener('pointerdown', onToggle, { capture: true })
             actionsBar.appendChild(starBtn)
           }
 
@@ -1303,7 +1302,6 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
               openInlineEditor(row, turn, userBubble)
             }
             editBtn.addEventListener('click', onEdit, { capture: true })
-            editBtn.addEventListener('pointerdown', onEdit, { capture: true })
             actionsBar.appendChild(editBtn)
           }
         }
