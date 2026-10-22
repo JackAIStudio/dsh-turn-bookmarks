@@ -22,9 +22,18 @@ DSH Web GUI 原生 Turn Rail（轮次导航轨）深度赋能插件：**100% 融
   - 图片走官方 `session.readAttachment` 读回字节（内容寻址，重跑后与原消息 **attachmentId 完全一致**）；原样文件走宿主路由 `/dsh-turn-bookmarks/attachment` 从 `<DSH_HOME>/attachments/v1` 读回字节。
   - 提交优先走会话服务 `conversation.createDrafts + sendSession`（文本 + 附件一次提交）；不可用时回退到作曲器路径（先合成 paste 注入附件，再走原有输入框发送）。
   - 宿主侧新增路由：`/dsh-turn-bookmarks/turn-content`（某一轮的文本 + 附件引用）与 `/dsh-turn-bookmarks/attachment`（按 attachmentId 读取字节，48 MiB 上限）。
+- **重跑使用的模型与思考程度由编辑器决定，不再看输入框**：输入框底部那个选择器只对「下一条新消息」生效，而重跑是从旧分叉点新开的会话，两者过去没有任何联系，所以换成 Max 仍会以 High 重跑。
+  - 编辑器里有一行「将使用」，模型与思考程度分开选；主按钮直接写明这次实际会用的东西，例如 `用 Max 重新运行`、`用 Grok 4.7 Fast · Extra High 重新运行`。
+  - 打开时拿这一轮**实际使用**的请求头（`request/header`）和输入框当前选择比：一样就保持原样；不一样就默认跟上输入框，并写明「已跟上输入框，原来是 …」，旁边可一键「改回上次」。真正生效的是这一行，不是输入框那个选择器。
+  - `adapterDefaults` 标出的思考程度视为模型默认值，不会被当成用户选过的等级。
+  - 权限预设用同一套规则（`permission/preset` + 输入框当前值）；只在两边不一致时出现，切换后在新分支里走 `/permission <preset>`。
+  - 限流时（429 / `RATE_LIMIT`）不再把普通「重新运行」当主按钮：主按钮变成 `换模型重跑` 并直接展开模型选择；`仍用 … 重跑` 留作次要动作，只有它才会按原来的模型提交。恢复时间已过则不再拦截。只改思考程度不算换模型，仍会被限流拦住。
+  - 每轮结果旁会标出这一轮实际用的 `模型 · 思考 X`（来自该轮的 `request/header`，重新打开会话也一致）。
+  - 切模型走 `ctx.get('remote.session').selectModel`。`remote.session` 是独立的 Cordis 服务，从 `remote` 上取属性会抛 `cannot get property "remote.session" without inject`，所以不能写成 `remote.session.selectModel`。
+  - 客户端插件是宿主合包提供的，改完 `client.js` 需要**完全退出并重启应用**才会装载新代码；只刷新窗口仍会跑旧包。
 
 ## 测试
 
 ```bash
-npm test   # home 解析 / 旧路径搬家 / 收藏会话隔离 / 轮次边界与提示词 / 轮次附件解析与附件字节读取
+npm test   # home 解析 / 旧路径搬家 / 收藏会话隔离 / 轮次边界与提示词 / 轮次附件解析与附件字节读取 / 重跑模型与权限选择规则
 ```

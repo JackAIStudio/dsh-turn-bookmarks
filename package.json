@@ -6,7 +6,7 @@
   "type": "module",
   "main": "./index.js",
   "scripts": {
-    "test": "node test/home-paths.test.mjs && node test/legacy-migration.test.mjs && node test/session-scope.test.mjs && node test/turn-boundary.test.mjs && node test/turn-prompt.test.mjs && node test/turn-attachment.test.mjs"
+    "test": "node test/home-paths.test.mjs && node test/legacy-migration.test.mjs && node test/session-scope.test.mjs && node test/turn-boundary.test.mjs && node test/turn-prompt.test.mjs && node test/turn-attachment.test.mjs && node --test test/rerun-selection.test.mjs"
   },
   "exports": {
     ".": "./index.js",
@@ -17,6 +17,7 @@
   "files": [
     "index.js",
     "client.js",
+    "rerun-selection.cjs",
     "cordis.patch.yml",
     "README.zh.md",
     "LICENSE"

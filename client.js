@@ -13,6 +13,315 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const module = { exports: {} }
 
+    const rerunSelection = (() => {
+// BEGIN RERUN SELECTION
+const PERMISSION_LABELS = {
+  'read-only': '仅可查看',
+  'workspace-write': '工作区内修改',
+  'danger-full-access': '完全权限',
+  auto: 'Auto review',
+  custom: '自定义',
+}
+
+const PERMISSION_OPTIONS = ['read-only', 'workspace-write', 'danger-full-access']
+
+function sameSelection(left, right) {
+  if (left === right) return true
+  if (left == null || right == null) return false
+  return left.provider === right.provider
+    && left.model === right.model
+    && (left.reasoningEffort || '') === (right.reasoningEffort || '')
+}
+
+/** Rate limits are per provider route; changing only the effort does not escape them. */
+function sameRoute(left, right) {
+  if (left === right) return true
+  if (left == null || right == null) return false
+  return left.provider === right.provider && left.model === right.model
+}
+
+function cloneSelection(selection) {
+  if (!selection) return null
+  const copy = { provider: selection.provider, model: selection.model }
+  if (selection.reasoningEffort) copy.reasoningEffort = selection.reasoningEffort
+  return copy
+}
+
+function selectionOf(data) {
+  if (!data || typeof data !== 'object') return null
+  if (typeof data.provider !== 'string' || data.provider === '') return null
+  if (typeof data.model !== 'string' || data.model === '') return null
+  return cloneSelection(data)
+}
+
+function selectionFromRequestHeader(event) {
+  const header = event && event.data && event.data.header
+  const selection = selectionOf(header && header.config)
+  if (!selection) return null
+  const defaults = header.adapterDefaults
+  if (defaults && defaults.reasoningEffort === true) delete selection.reasoningEffort
+  return selection
+}
+
+function eventOf(entry) {
+  if (!entry || typeof entry !== 'object') return null
+  return entry.event && typeof entry.event === 'object' ? entry.event : entry
+}
+
+function projectRerunContext(entries, turn) {
+  let pending = null
+  let lastUsed = null
+  let atStart = null
+  let used = null
+  let inTurn = false
+  let permission = null
+  let permissionAtStart = null
+  let permissionUsed = null
+  for (const entry of entries || []) {
+    const ev = eventOf(entry)
+    if (!ev || typeof ev.type !== 'string') continue
+    if (ev.type === 'model/selection') {
+      const selection = selectionOf(ev.data)
+      if (selection && !sameSelection(pending, selection)) pending = selection
+    } else if (ev.type === 'request/header') {
+      const selection = selectionFromRequestHeader(ev)
+      if (selection) {
+        lastUsed = selection
+        if (sameSelection(pending, selection)) pending = null
+        if (inTurn) used = selection
+      }
+    } else if (ev.type === 'permission/preset') {
+      const name = ev.data && ev.data.preset
+      if (typeof name === 'string' && name !== '') {
+        permission = name
+        if (inTurn) permissionUsed = name
+      }
+    } else if (ev.type === 'turn/start' && ev.data && ev.data.turn === turn) {
+      inTurn = true
+      atStart = pending || lastUsed
+      permissionAtStart = permission
+      permissionUsed = null
+    } else if (inTurn && ev.type === 'turn/end' && ev.data && ev.data.turn === turn) {
+      inTurn = false
+    }
+  }
+  return {
+    atTurn: used || atStart || null,
+    latest: pending || lastUsed || null,
+    permissionAtTurn: permissionUsed || permissionAtStart || null,
+    permissionLatest: permission,
+  }
+}
+
+function decideChoice(original, current) {
+  if (current && (!original || !sameSelection(original, current))) {
+    return {
+      chosen: cloneSelection(current),
+      followedCurrent: !!(original && !sameSelection(original, current)),
+    }
+  }
+  return {
+    chosen: original ? cloneSelection(original) : (current ? cloneSelection(current) : null),
+    followedCurrent: false,
+  }
+}
+
+function decidePermission(original, current) {
+  if (current && original && current !== original) {
+    return { chosen: current, followedCurrent: true }
+  }
+  return { chosen: original || current || null, followedCurrent: false }
+}
+
+function findModel(groups, selection) {
+  if (!selection) return null
+  for (const group of groups || []) {
+    if (!group || group.id !== selection.provider) continue
+    const model = (group.models || []).find((item) => item && item.id === selection.model)
+    if (model) return { group, model }
+  }
+  return null
+}
+
+function normalizeEffort(groups, selection) {
+  const copy = cloneSelection(selection)
+  if (!copy || copy.reasoningEffort) return copy
+  const found = findModel(groups, copy)
+  const fallback = found && found.model && found.model.reasoning && found.model.reasoning.defaultEffort
+  if (typeof fallback === 'string' && fallback !== '') copy.reasoningEffort = fallback
+  return copy
+}
+
+function withModel(groups, selection, provider, modelId) {
+  const next = { provider, model: modelId }
+  const found = findModel(groups, next)
+  const efforts = (found && found.model && found.model.reasoning && found.model.reasoning.efforts) || []
+  if (efforts.length === 0) return next
+  const previous = selection && selection.reasoningEffort
+  const sameModel = !!(selection && selection.provider === provider && selection.model === modelId)
+  const kept = sameModel && previous && efforts.some((level) => level && level.id === previous)
+  const fallback = found.model.reasoning.defaultEffort || (efforts[0] && efforts[0].id)
+  if (kept || fallback) next.reasoningEffort = kept ? previous : fallback
+  return next
+}
+
+/**
+ * Restore the selection this turn originally ran with.
+ * Keeping the effort only makes sense when it belongs to the restored model.
+ */
+function restoreSelection(groups, original, current) {
+  if (!original) return current ? cloneSelection(current) : null
+  const restored = cloneSelection(original)
+  const found = findModel(groups, restored)
+  const efforts = (found && found.model && found.model.reasoning && found.model.reasoning.efforts) || []
+  if (efforts.length === 0) {
+    delete restored.reasoningEffort
+    return restored
+  }
+  const known = restored.reasoningEffort
+    && efforts.some((level) => level && level.id === restored.reasoningEffort)
+  if (!known) {
+    const fallback = found.model.reasoning.defaultEffort || (efforts[0] && efforts[0].id)
+    if (fallback) restored.reasoningEffort = fallback
+  }
+  return restored
+}
+
+function effortName(model, effortId) {
+  if (!effortId) return ''
+  const efforts = (model && model.reasoning && model.reasoning.efforts) || []
+  const found = efforts.find((level) => level && level.id === effortId)
+  return (found && found.name) || effortId
+}
+
+function selectionLabel(groups, selection) {
+  if (!selection) return '未选择模型'
+  const found = findModel(groups, selection)
+  const modelName = (found && found.model && found.model.name) || selection.model
+  if (!selection.reasoningEffort) return modelName
+  const effort = effortName(found && found.model, selection.reasoningEffort)
+  return effort ? modelName + ' · 思考 ' + effort : modelName
+}
+
+function modelOptions(groups) {
+  const raw = []
+  const nameCount = new Map()
+  for (const group of groups || []) {
+    if (!group) continue
+    for (const model of group.models || []) {
+      if (!model) continue
+      const name = model.name || model.id
+      nameCount.set(name, (nameCount.get(name) || 0) + 1)
+      raw.push({
+        provider: group.id,
+        model: model.id,
+        name,
+        group: group.name || group.id,
+      })
+    }
+  }
+  return raw.map((option) => ({
+    ...option,
+    label: nameCount.get(option.name) > 1 ? option.name + ' · ' + option.group : option.name,
+  }))
+}
+
+function permissionLabel(preset) {
+  if (!preset) return '未设置'
+  return PERMISSION_LABELS[preset] || preset
+}
+
+function permissionChoices(original, current) {
+  const values = PERMISSION_OPTIONS.slice()
+  for (const extra of [original, current]) {
+    if (extra && extra !== 'custom' && values.indexOf(extra) === -1) values.push(extra)
+  }
+  return values
+}
+
+function shorten(text, max) {
+  const value = String(text || '')
+  if (value.length <= max) return value
+  return value.slice(0, Math.max(1, max - 1)) + '…'
+}
+
+function rerunButtonLabel(groups, chosen, original, rateLimitedOnChosen) {
+  if (!chosen) return '重新运行'
+  if (rateLimitedOnChosen) return '换模型重跑'
+  const found = findModel(groups, chosen)
+  const modelName = (found && found.model && found.model.name) || chosen.model
+  if (!original) {
+    const effort = effortName(found && found.model, chosen.reasoningEffort)
+    return effort
+      ? '用 ' + shorten(modelName, 18) + ' · ' + effort + ' 重新运行'
+      : '用 ' + shorten(modelName, 18) + ' 重新运行'
+  }
+  if (sameSelection(chosen, original)) return '重新运行'
+  const sameModel = chosen.provider === original.provider && chosen.model === original.model
+  if (sameModel) {
+    const effort = effortName(found && found.model, chosen.reasoningEffort)
+    return effort ? '用 ' + effort + ' 重新运行' : '重新运行'
+  }
+  const short = shorten(modelName, 18)
+  const effortChanged = (chosen.reasoningEffort || '') !== (original.reasoningEffort || '')
+  if (effortChanged && chosen.reasoningEffort) {
+    const effort = effortName(found && found.model, chosen.reasoningEffort)
+    return effort ? '用 ' + short + ' · ' + effort + ' 重新运行' : '用 ' + short + ' 重新运行'
+  }
+  return '用 ' + short + ' 重新运行'
+}
+
+function stillRunLabel(groups, selection) {
+  if (!selection) return '仍用当前模型重跑'
+  const found = findModel(groups, selection)
+  const effort = effortName(found && found.model, selection.reasoningEffort)
+  if (effort) return '仍用 ' + effort + ' 重跑'
+  const modelName = (found && found.model && found.model.name) || selection.model
+  return '仍用 ' + shorten(modelName, 12) + ' 重跑'
+}
+
+function parseRateLimit(text, now = Date.now()) {
+  if (typeof text !== 'string' || text === '') return null
+  // Provider errors often arrive with escaped JSON quotes; match the readable text.
+  const plain = text.replace(/\\/g, '')
+  if (!/频率限制|rate[_ ]limit|RATE_LIMIT|"code"\s*:\s*"rate"/.test(plain)) return null
+  const match = plain.match(/将在\s+(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})/)
+  if (!match) return { resetAt: null, expired: false }
+  const resetAt = match[1].slice(5) + ' ' + match[2]
+  const stamp = new Date(match[1] + 'T' + match[2] + ':00+08:00').getTime()
+  return {
+    resetAt,
+    expired: Number.isFinite(stamp) && stamp <= now,
+  }
+}
+
+const rerunSelectionApi = {
+  sameSelection,
+  sameRoute,
+  cloneSelection,
+  selectionOf,
+  selectionFromRequestHeader,
+  projectRerunContext,
+  decideChoice,
+  decidePermission,
+  findModel,
+  normalizeEffort,
+  withModel,
+  restoreSelection,
+  effortName,
+  selectionLabel,
+  modelOptions,
+  permissionLabel,
+  PERMISSION_LABELS,
+  permissionChoices,
+  rerunButtonLabel,
+  stillRunLabel,
+  parseRateLimit,
+}
+// END RERUN SELECTION
+      return rerunSelectionApi
+    })()
+
     const CSS_ID = 'dsh-turn-bookmarks/style.css'
     const STORAGE_KEY = 'dsh_turn_bookmarks_v1'
 
@@ -774,6 +1083,71 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
   background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
 }
 
+.dsh-tb-run {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  padding: 0 2px !important;
+}
+
+.dsh-tb-run-row {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+.dsh-tb-run-label,
+.dsh-tb-run-note {
+  font-size: 11.5px !important;
+  color: var(--dsw-alias-label-tertiary, #64748b) !important;
+  user-select: none !important;
+}
+
+.dsh-tb-run-select {
+  max-width: 240px !important;
+  padding: 3px 8px !important;
+  border-radius: 6px !important;
+  border: 1px solid var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.25)) !important;
+  background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.06)) !important;
+  color: var(--dsw-alias-label-primary, #e2e8f0) !important;
+  font-size: 12px !important;
+  font-family: inherit !important;
+  color-scheme: light !important;
+}
+
+[data-ds-dark-theme] .dsh-tb-run-select,
+[data-theme="dark"] .dsh-tb-run-select,
+html.dark .dsh-tb-run-select {
+  color-scheme: dark !important;
+}
+
+.dsh-tb-run-link {
+  border: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+  color: var(--dsw-alias-brand-primary, #60a5fa) !important;
+  cursor: pointer !important;
+  font-size: 11.5px !important;
+}
+
+.dsh-tb-run-warn {
+  font-size: 11.5px !important;
+  color: #d97706 !important;
+}
+
+.dsh-tb-turn-model {
+  font-size: 10.5px !important;
+  line-height: 1.5 !important;
+  padding: 0 6px !important;
+  border-radius: 10px !important;
+  color: var(--dsw-alias-label-tertiary, #8b949e) !important;
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.12)) !important;
+  white-space: nowrap !important;
+  user-select: none !important;
+  cursor: default !important;
+}
+
 .dsh-tb-btn {
   padding: 5px 14px !important;
   border-radius: 6px !important;
@@ -1240,11 +1614,88 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       }
 
       // ── In-Message Star Action Buttons ────────────────────────────────────
+      /**
+       * The model each visible turn actually ran on. The durable request header is
+       * the only honest source; it also survives reopening the session.
+       */
+      let turnModelsCache = { key: '', models: new Map() }
+      function readTurnModels() {
+        const models = new Map()
+        try {
+          const sessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
+          const entries = sessionsRef?.binding?.(sessionId)?.session?.eventSource?.getSnapshot?.()?.entries
+          if (!Array.isArray(entries) || entries.length === 0) return models
+          const last = entries[entries.length - 1]
+          const lastSeq = (last?.event || last)?.seq
+          const key = sessionId + '|' + entries.length + '|' + String(lastSeq)
+          if (turnModelsCache.key === key) return turnModelsCache.models
+          let pending = null
+          let currentTurn = null
+          for (const entry of entries) {
+            const ev = entry?.event || entry
+            if (!ev || typeof ev.type !== 'string') continue
+            if (ev.type === 'model/selection') {
+              pending = rerunSelection.selectionOf(ev.data)
+            } else if (ev.type === 'request/header') {
+              const used = rerunSelection.selectionFromRequestHeader(ev)
+              if (used) {
+                if (currentTurn !== null) models.set(currentTurn, used)
+                if (rerunSelection.sameSelection(pending, used)) pending = null
+              }
+            } else if (ev.type === 'turn/start') {
+              currentTurn = ev.data?.turn ?? null
+            } else if (ev.type === 'turn/end' && ev.data?.turn === currentTurn) {
+              currentTurn = null
+            }
+          }
+          turnModelsCache = { key, models }
+        } catch (err) {
+          console.warn('[dsh-turn-bookmarks] Failed to read per-turn models:', err)
+        }
+        return models
+      }
+
+      function turnModelGroups() {
+        try {
+          const sessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
+          return ctx.get('modelDirectories')?.directoryFor?.(sessionId)?.store?.getSnapshot?.()?.groups || []
+        } catch {
+          return []
+        }
+      }
+
+      function markTurnModel(row, turn, models, groups) {
+        const used = models.get(turn)
+        const existing = row.querySelector('.dsh-tb-turn-model')
+        const actions = row.querySelector('[class*="_actions"], [class*="actions"]')
+        const isUserRow = !!row.querySelector('[class*="_bubble"], [class*="bubble"]')
+        if (!isUserRow && !actions) {
+          existing?.remove()
+          return
+        }
+        if (!used) {
+          existing?.remove()
+          return
+        }
+        const label = rerunSelection.selectionLabel(groups, used)
+        const chip = existing || document.createElement('span')
+        if (!existing) {
+          chip.className = 'dsh-tb-turn-model'
+          if (actions && actions.parentElement) actions.parentElement.insertBefore(chip, actions)
+          else row.appendChild(chip)
+        }
+        chip.textContent = label
+        chip.title = '这一轮实际使用的模型和思考程度'
+      }
+
       function injectMessageStarButtons() {
         const rows = document.querySelectorAll('[data-chat-turn]')
+        const usedModels = readTurnModels()
+        const groups = usedModels.size > 0 ? turnModelGroups() : []
         for (const row of rows) {
           const turn = parseInt(row.dataset.chatTurn || '', 10)
           if (!Number.isSafeInteger(turn)) continue
+          markTurnModel(row, turn, usedModels, groups)
           const actionsBar = row.querySelector('[class*="_actions"], [class*="actions"]')
           if (!actionsBar) continue
 
@@ -1308,6 +1759,422 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       }
 
       // ── Inline Prompt Editor & Fork-Rerun Engine ──────────────────────────
+      function mountRerunControls(row, turn, ui) {
+        const {
+          sameSelection,
+          sameRoute,
+          projectRerunContext,
+          decideChoice,
+          decidePermission,
+          normalizeEffort,
+          withModel,
+          restoreSelection,
+          findModel,
+          cloneSelection,
+          selectionLabel,
+          modelOptions,
+          permissionLabel,
+          PERMISSION_LABELS,
+          permissionChoices,
+          rerunButtonLabel,
+          stillRunLabel,
+          parseRateLimit,
+        } = rerunSelection
+        const SEP = String.fromCharCode(9)
+
+        const box = document.createElement('div')
+        box.className = 'dsh-tb-run'
+        const status = document.createElement('div')
+        status.className = 'dsh-tb-run-note'
+        status.dataset.dshTbRun = 'status'
+        status.textContent = '正在读取这次要用的模型和权限…'
+        const modelRow = document.createElement('div')
+        modelRow.className = 'dsh-tb-run-row'
+        modelRow.style.display = 'none'
+        const modelLabel = document.createElement('span')
+        modelLabel.className = 'dsh-tb-run-label'
+        modelLabel.textContent = '将使用'
+        const modelSelect = document.createElement('select')
+        modelSelect.className = 'dsh-tb-run-select'
+        modelSelect.setAttribute('aria-label', '这次重新运行使用的模型')
+        const effortSelect = document.createElement('select')
+        effortSelect.className = 'dsh-tb-run-select'
+        effortSelect.setAttribute('aria-label', '这次重新运行的思考程度')
+        modelRow.append(modelLabel, modelSelect, effortSelect)
+        const follow = document.createElement('div')
+        follow.className = 'dsh-tb-run-note'
+        follow.dataset.dshTbRun = 'follow'
+        follow.style.display = 'none'
+        const permissionRow = document.createElement('div')
+        permissionRow.className = 'dsh-tb-run-row'
+        permissionRow.style.display = 'none'
+        const permissionName = document.createElement('span')
+        permissionName.className = 'dsh-tb-run-label'
+        permissionName.textContent = '权限'
+        const permissionSelect = document.createElement('select')
+        permissionSelect.className = 'dsh-tb-run-select'
+        permissionSelect.setAttribute('aria-label', '这次重新运行使用的权限')
+        const permissionNote = document.createElement('span')
+        permissionNote.className = 'dsh-tb-run-note'
+        permissionNote.dataset.dshTbRun = 'permission'
+        permissionRow.append(permissionName, permissionSelect, permissionNote)
+        const warn = document.createElement('div')
+        warn.className = 'dsh-tb-run-warn'
+        warn.dataset.dshTbRun = 'warn'
+        warn.style.display = 'none'
+        box.append(status, modelRow, follow, permissionRow, warn)
+
+        const stillBtn = document.createElement('button')
+        stillBtn.type = 'button'
+        stillBtn.className = 'dsh-tb-btn'
+        stillBtn.style.display = 'none'
+        ui.btns.insertBefore(stillBtn, ui.runBtn)
+
+        const state = {
+          ready: false,
+          busy: false,
+          touchedModel: false,
+          touchedPermission: false,
+          groups: [],
+          original: null,
+          composer: null,
+          chosen: null,
+          followedModel: false,
+          followedPermission: false,
+          originalPermission: null,
+          composerPermission: null,
+          chosenPermission: null,
+          rateLimit: null,
+        }
+        let rendering = false
+
+        function optionValue(selection) {
+          return selection ? selection.provider + SEP + selection.model : ''
+        }
+
+        function fillSelect(select, options, value) {
+          const previous = select.value
+          select.replaceChildren()
+          for (const option of options) {
+            const node = document.createElement('option')
+            node.value = option.value
+            node.textContent = option.label
+            select.appendChild(node)
+          }
+          const known = Array.from(select.options).some((option) => option.value === value)
+          if (value && !known) {
+            const node = document.createElement('option')
+            node.value = value
+            node.textContent = value
+            select.appendChild(node)
+          }
+          if (value) select.value = value
+          else if (previous) select.value = previous
+        }
+
+        function blockingNow() {
+          return !!(state.rateLimit && !state.rateLimit.expired && state.original && state.chosen && sameRoute(state.chosen, state.original))
+        }
+
+        function linkButton(label, onClick) {
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.className = 'dsh-tb-run-link'
+          button.textContent = label
+          button.addEventListener('click', onClick)
+          return button
+        }
+
+        function render() {
+          rendering = true
+          try {
+            const blocking = blockingNow()
+            ui.runBtn.textContent = state.ready
+              ? rerunButtonLabel(state.groups, state.chosen, state.original, blocking)
+              : '读取模型…'
+            ui.runBtn.disabled = !state.ready || state.busy
+            stillBtn.style.display = blocking ? '' : 'none'
+            stillBtn.textContent = stillRunLabel(state.groups, state.original)
+            stillBtn.disabled = state.busy
+            ui.hint.textContent = blocking
+              ? '⌘ Enter 仍用当前模型重跑 · Esc 取消'
+              : '⌘ Enter 重新运行 · Esc 取消'
+
+            if (!state.chosen) {
+              status.style.setProperty('display', 'block', 'important')
+              status.textContent = state.ready
+                ? '没读到这条消息的模型，重跑会沿用分叉时带上的设置。'
+                : '正在读取这次要用的模型和权限…'
+              modelRow.style.setProperty('display', 'none', 'important')
+            } else {
+              status.style.setProperty('display', 'none', 'important')
+              modelRow.style.setProperty('display', 'flex', 'important')
+              const options = modelOptions(state.groups).map((option) => ({
+                value: option.provider + SEP + option.model,
+                label: option.label,
+              }))
+              fillSelect(modelSelect, options, optionValue(state.chosen))
+              const found = findModel(state.groups, state.chosen)
+              const efforts = (found && found.model.reasoning && found.model.reasoning.efforts) || []
+              if (efforts.length === 0) {
+                effortSelect.style.setProperty('display', 'none', 'important')
+              } else {
+                effortSelect.style.setProperty('display', '', 'important')
+                fillSelect(
+                  effortSelect,
+                  efforts.map((level) => ({ value: level.id, label: '思考 ' + (level.name || level.id) })),
+                  state.chosen.reasoningEffort || '',
+                )
+              }
+            }
+
+            follow.replaceChildren()
+            const showOriginal = state.original && state.chosen && !sameSelection(state.chosen, state.original)
+            if (!showOriginal) {
+              follow.style.setProperty('display', 'none', 'important')
+            } else {
+              follow.style.setProperty('display', 'block', 'important')
+              follow.append(state.followedModel
+                ? '已跟上输入框，原来是 ' + selectionLabel(state.groups, state.original)
+                : '这条上次是 ' + selectionLabel(state.groups, state.original))
+              follow.append(document.createTextNode(' · '))
+              follow.append(linkButton('改回上次', () => {
+                state.touchedModel = true
+                state.chosen = restoreSelection(state.groups, state.original, state.composer)
+                state.followedModel = false
+                render()
+              }))
+            }
+
+            const permissionDiffers = !!(state.originalPermission && state.composerPermission
+              && state.originalPermission !== state.composerPermission)
+            const permissionMoved = !!(state.chosenPermission && state.originalPermission
+              && state.chosenPermission !== state.originalPermission)
+            if (!permissionDiffers && !permissionMoved) {
+              permissionRow.style.setProperty('display', 'none', 'important')
+            } else {
+              permissionRow.style.setProperty('display', 'flex', 'important')
+              fillSelect(
+                permissionSelect,
+                permissionChoices(state.originalPermission, state.composerPermission).map((preset) => ({
+                  value: preset,
+                  label: permissionLabel(preset),
+                })),
+                state.chosenPermission || '',
+              )
+              permissionNote.replaceChildren()
+              if (state.originalPermission && state.chosenPermission !== state.originalPermission) {
+                permissionNote.append(state.followedPermission
+                  ? '已跟上输入框，原来是 ' + permissionLabel(state.originalPermission)
+                  : '这条上次是 ' + permissionLabel(state.originalPermission))
+                permissionNote.append(document.createTextNode(' · '))
+                permissionNote.append(linkButton('改回上次', () => {
+                  state.touchedPermission = true
+                  state.chosenPermission = state.originalPermission
+                  state.followedPermission = false
+                  render()
+                }))
+              }
+            }
+
+            if (state.rateLimit && state.original) {
+              const when = state.rateLimit.resetAt ? '，' + state.rateLimit.resetAt + ' 恢复' : ''
+              const label = selectionLabel(state.groups, state.original)
+              warn.style.setProperty('display', 'block', 'important')
+              warn.textContent = blocking ? label + ' 已限流' + when : '原来的 ' + label + ' 已限流' + when
+            } else {
+              warn.style.setProperty('display', 'none', 'important')
+            }
+            modelSelect.disabled = state.busy
+            effortSelect.disabled = state.busy
+            permissionSelect.disabled = state.busy
+          } finally {
+            rendering = false
+          }
+        }
+
+        modelSelect.addEventListener('change', () => {
+          if (rendering) return
+          const parts = modelSelect.value.split(SEP)
+          if (parts.length < 2 || !parts[0] || !parts[1]) return
+          state.touchedModel = true
+          state.chosen = withModel(state.groups, state.chosen, parts[0], parts[1])
+          state.followedModel = sameSelection(state.chosen, state.composer)
+          render()
+        })
+        effortSelect.addEventListener('change', () => {
+          if (rendering || !state.chosen) return
+          state.touchedModel = true
+          state.chosen = {
+            provider: state.chosen.provider,
+            model: state.chosen.model,
+            reasoningEffort: effortSelect.value,
+          }
+          state.followedModel = sameSelection(state.chosen, state.composer)
+          render()
+        })
+        permissionSelect.addEventListener('change', () => {
+          if (rendering) return
+          state.touchedPermission = true
+          state.chosenPermission = permissionSelect.value
+          state.followedPermission = state.chosenPermission === state.composerPermission
+          render()
+        })
+
+        function rateLimitNear(target) {
+          const chunks = []
+          if (target && target.innerText) chunks.push(target.innerText)
+          let sibling = target && target.nextElementSibling
+          for (let i = 0; sibling && i < 4; i += 1) {
+            chunks.push(sibling.innerText || '')
+            if (sibling.querySelector && sibling.querySelector('.dsh-tb-msg-edit')) break
+            sibling = sibling.nextElementSibling
+          }
+          return parseRateLimit(chunks.join(String.fromCharCode(10)))
+        }
+
+        /**
+         * Read the composer's live model and permission, not a cached projection.
+         * The picker can change while this popover is open.
+         */
+        function readComposerNow(groups, fallbackModel, fallbackPermission) {
+          let model = fallbackModel
+          let permission = fallbackPermission
+          try {
+            const trigger = document.querySelector('[aria-label^="选择模型"],[aria-label^="Select model"]')
+            const label = trigger && trigger.getAttribute('title')
+            if (label) {
+              const parts = label.split(' · ')
+              const match = (modelOptions(groups) || []).find((option) => option.name === parts[0] || option.label === parts[0])
+              if (match) {
+                const next = { provider: match.provider, model: match.model }
+                const effort = parts.slice(1).join(' · ')
+                const found = findModel(groups, next)
+                const level = effort && ((found && found.model.reasoning && found.model.reasoning.efforts) || [])
+                  .find((item) => item && (item.name === effort || item.id === effort))
+                if (level) next.reasoningEffort = level.id
+                model = next
+              }
+            }
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] Failed to read the composer model:', err)
+          }
+          try {
+            const button = Array.from(document.querySelectorAll('[data-composer-card] button'))
+              .find((node) => /仅可查看|工作区内修改|完全权限|Read Only|Workspace Write|Full access/.test(node.textContent || ''))
+            const text = button && button.textContent
+            const preset = text && Object.keys(PERMISSION_LABELS).find((key) => PERMISSION_LABELS[key] === text.trim())
+            if (preset) permission = preset
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] Failed to read the composer permission:', err)
+          }
+          return { model, permission }
+        }
+
+        async function load() {
+          state.rateLimit = rateLimitNear(row)
+          const sessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
+          let entries = []
+          try {
+            const sessionObj = sessionsRef && sessionsRef.binding && sessionsRef.binding(sessionId)
+            entries = sessionObj?.session?.eventSource?.getSnapshot?.()?.entries || []
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] Failed to read session events for rerun model:', err)
+          }
+          const projected = projectRerunContext(entries, turn)
+          let groups = []
+          let composer = projected.latest || null
+          let composerPermission = projected.permissionLatest
+          try {
+            const directories = ctx.get('modelDirectories')
+            const directory = directories && directories.directoryFor && directories.directoryFor(sessionId)
+            if (directory && directory.load) await directory.load()
+            const snap = directory && directory.store && directory.store.getSnapshot && directory.store.getSnapshot()
+            if (snap) {
+              groups = snap.groups || []
+              if (snap.current && snap.current.provider && snap.current.model) composer = snap.current
+            }
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] model directory unavailable:', err)
+          }
+          try {
+            const sessionObj = sessionsRef && sessionsRef.binding && sessionsRef.binding(sessionId)
+            const permissionSnap = sessionObj?.session?.projections?.faceOf?.('permissions')?.getSnapshot?.()
+            if (permissionSnap && permissionSnap.currentValue) composerPermission = permissionSnap.currentValue
+          } catch {}
+          state.groups = groups
+          state.original = normalizeEffort(groups, projected.atTurn)
+          state.originalPermission = projected.permissionAtTurn
+          const live = readComposerNow(groups, composer, composerPermission)
+          state.composer = normalizeEffort(groups, live.model)
+          state.composerPermission = live.permission
+          if (!state.touchedModel) {
+            const decision = decideChoice(state.original, state.composer)
+            state.chosen = decision.chosen
+            state.followedModel = decision.followedCurrent
+          } else {
+            state.chosen = normalizeEffort(groups, state.chosen)
+          }
+          if (!state.touchedPermission) {
+            const permissionDecision = decidePermission(state.originalPermission, state.composerPermission)
+            state.chosenPermission = permissionDecision.chosen
+            state.followedPermission = permissionDecision.followedCurrent
+          }
+          state.ready = true
+          render()
+        }
+
+        load().catch((err) => {
+          console.warn('[dsh-turn-bookmarks] Failed to prepare rerun model controls:', err)
+          state.ready = true
+          render()
+        })
+        render()
+
+        return {
+          element: box,
+          stillBtn,
+          mode() {
+            return blockingNow() ? 'switch-model' : 'submit'
+          },
+          focusModel() {
+            modelSelect.focus()
+            if (typeof modelSelect.showPicker === 'function') {
+              try { modelSelect.showPicker() } catch {}
+            }
+          },
+          choice() {
+            return {
+              model: state.chosen,
+              composerModel: state.composer,
+              permission: state.chosenPermission,
+            }
+          },
+          /** 限流时「仍用上次重跑」提交的必须是这条消息原本的选择。 */
+          originalChoice() {
+            return {
+              model: state.original,
+              composerModel: state.composer,
+              permission: state.originalPermission || state.chosenPermission,
+            }
+          },
+          ready() {
+            return state.ready && !state.busy
+          },
+          setBusy(busy) {
+            state.busy = busy
+            if (!busy) render()
+            else {
+              ui.runBtn.disabled = true
+              stillBtn.disabled = true
+              modelSelect.disabled = true
+              effortSelect.disabled = true
+              permissionSelect.disabled = true
+            }
+          },
+        }
+      }
+
       function openInlineEditor(row, turn, userBubble) {
         if (row.querySelector('.dsh-tb-inline-editor')) return
         const fallbackText = userBubble.innerText.trim()
@@ -1380,9 +2247,12 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         footer.appendChild(hint)
         footer.appendChild(btns)
 
+        const controls = mountRerunControls(row, turn, { runBtn, hint, btns })
+
         editor.appendChild(refBar)
         editor.appendChild(attachBar)
         editor.appendChild(textarea)
+        editor.appendChild(controls.element)
         editor.appendChild(footer)
 
         userBubble.parentNode.insertBefore(editor, userBubble.nextSibling)
@@ -1549,29 +2419,37 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         }
 
         const closeEditor = () => {
-          editor.remove()
           userBubble.style.display = ''
           releaseCarriedPreviews()
+          editor.remove()
         }
 
         cancelBtn.addEventListener('click', closeEditor)
 
         const restoreControls = () => {
-          runBtn.disabled = false
           cancelBtn.disabled = false
           textarea.disabled = false
-          runBtn.textContent = '重新运行'
+          controls.setBusy(false)
         }
 
-        const doSubmit = async () => {
+        const doSubmit = async (useOriginal) => {
           const editedText = textarea.value.trim()
           if (!editedText) {
             textarea.focus()
             return
           }
+          if (!controls.ready()) {
+            textarea.focus()
+            return
+          }
+          if (!useOriginal && controls.mode() === 'switch-model') {
+            controls.focusModel()
+            return
+          }
           runBtn.disabled = true
           cancelBtn.disabled = true
           textarea.disabled = true
+          controls.setBusy(true)
 
           try {
             // 合成符合 DSH 会话要求的完整带有气泡引用的提示词
@@ -1608,7 +2486,8 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
             }
 
             runBtn.textContent = '正在分叉...'
-            await forkAndRerunTurn(turn, fullText, files)
+            const choice = useOriginal ? controls.originalChoice() : controls.choice()
+            await forkAndRerunTurn(turn, fullText, files, choice)
             closeEditor()
           } catch (err) {
             console.error('[dsh-turn-bookmarks] Fork & rerun failed:', err)
@@ -1617,7 +2496,8 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           }
         }
 
-        runBtn.addEventListener('click', doSubmit)
+        runBtn.addEventListener('click', () => doSubmit(false))
+        controls.stillBtn.addEventListener('click', () => doSubmit(true))
 
         textarea.addEventListener('keydown', (e) => {
           if (e.key === 'Escape') {
@@ -1625,7 +2505,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
             closeEditor()
           } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault()
-            doSubmit()
+            doSubmit(true)
           }
         })
       }
@@ -1889,7 +2769,94 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         return { files, failed }
       }
 
-      async function forkAndRerunTurn(turn, newText, files = []) {
+      function getRemote() {
+        try {
+          return ctx.get('remote') || ctx.get('@deepseek-ai/dsh-api-remotes') || null
+        } catch {
+          return null
+        }
+      }
+
+      async function selectModelOn(sessionId, selection) {
+        // `remote.session` is its own Cordis service; reading it off `remote`
+        // throws `cannot get property "remote.session" without inject`.
+        let sessionRemote = null
+        try {
+          sessionRemote = ctx.get('remote.session')
+        } catch {}
+        if (!sessionRemote) {
+          const remote = getRemote()
+          try {
+            sessionRemote = remote && remote.session
+          } catch (err) {
+            console.warn('[dsh-turn-bookmarks] remote.session is not injected:', err)
+          }
+        }
+        const selectModel = sessionRemote && sessionRemote.selectModel
+        if (typeof selectModel !== 'function') {
+          throw new Error('模型切换接口不可用，这次重跑无法改模型和思考程度')
+        }
+        const request = {
+          sessionId,
+          provider: selection.provider,
+          model: selection.model,
+        }
+        if (selection.reasoningEffort) request.reasoningEffort = selection.reasoningEffort
+        // 刚分叉的子会话可能还在 resume；宿主会把这种失败明确报成会话级错误。
+        let result
+        let lastError
+        for (let attempt = 0; attempt < 20; attempt += 1) {
+          try {
+            result = await selectModel.call(sessionRemote, request)
+            break
+          } catch (err) {
+            lastError = err
+            const message = String(err && err.message || err)
+            if (!/not materialized|不可用|not found|resume|正在|pending/i.test(message)) throw err
+            await sleep(150)
+          }
+        }
+        if (result === undefined) throw lastError || new Error('切换模型超时')
+        if (result && result.ok === false) {
+          const error = result.error || {}
+          throw new Error(error.message || error.code || '切换模型失败')
+        }
+      }
+
+      async function applyRerunChoice(childId, parentId, choice) {
+        if (!choice) return
+        if (choice.model && choice.model.provider && choice.model.model) {
+          await selectModelOn(childId, choice.model)
+          if (choice.composerModel && !rerunSelection.sameSelection(choice.model, choice.composerModel)) {
+            try {
+              await selectModelOn(parentId, choice.composerModel)
+            } catch (err) {
+              console.warn('[dsh-turn-bookmarks] 没能把输入框模型改回去:', err)
+            }
+          }
+        }
+        if (!choice.permission || choice.permission === 'custom') return
+        // 权限切换只需要会话对象，不需要 composer 就绪。
+        const sessionObj = await waitForSessionObject(childId)
+        if (!sessionObj || typeof sessionObj.command !== 'function') {
+          throw new Error('新分支还没就绪，没法切换权限')
+        }
+        let current = null
+        try {
+          current = sessionObj.projections?.faceOf?.('permissions')?.getSnapshot?.()?.currentValue || null
+        } catch {}
+        if (current === choice.permission) return
+        const result = await sessionObj.command('/permission ' + choice.permission)
+        if (result && result.ok === false) {
+          const error = result.error || {}
+          throw new Error(error.message || '切换权限失败')
+        }
+        if (result && result.value && result.value.matched === false) {
+          throw new Error('宿主没有 /permission 命令，没法切换权限')
+        }
+      }
+
+      async function forkAndRerunTurn(turn, newText, files = [], choice = null) {
         const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
         if (!currentSessionId || currentSessionId === 'default') {
           throw new Error('未找到当前活跃会话 ID')
@@ -1962,6 +2929,8 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           sessionsRef.select(childId)
         }
 
+        await applyRerunChoice(childId, currentSessionId, choice)
+
         // 原消息带的图片 / 附件一起进新分支：优先走会话服务一次提交（文本 + 附件）
         if (files.length > 0) {
           const sent = await trySendViaConversation(childId, newText, files)
@@ -1986,6 +2955,19 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           try {
             const sessionObj = sessionsRef?.binding?.(sessionId)?.session
             if (sessionObj && typeof sessionObj.prompt === 'function') return sessionObj
+          } catch {}
+          if (Date.now() >= deadline) return null
+          await sleep(150)
+        }
+      }
+
+      /** 等子会话对象出现；权限切换不依赖 prompt，别被 composer 的等待拖住。 */
+      async function waitForSessionObject(sessionId, timeoutMs = 8000) {
+        const deadline = Date.now() + timeoutMs
+        for (;;) {
+          try {
+            const sessionObj = sessionsRef?.binding?.(sessionId)?.session
+            if (sessionObj) return sessionObj
           } catch {}
           if (Date.now() >= deadline) return null
           await sleep(150)
