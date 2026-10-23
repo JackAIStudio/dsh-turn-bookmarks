@@ -91,3 +91,15 @@ test('新实例接管时，旧实例的 tick 会自我退场', () => {
   assert.match(src, /instance\.dispose\?\.\(\)/, '孤儿实例必须自行清理')
   assert.match(src, /if \(enhanceTimer\) clearTimeout\(enhanceTimer\)/, '孤儿实例必须先取消防抖回调')
 })
+
+// 背景（2026-10-23）：搜索栏插在会话头的 tabs 行里，而宿主给整行设了
+// -webkit-app-region: drag（窗口拖拽区）。命中测试虽然落在按钮上、onclick 也在，
+// 但鼠标按下被系统拿去拖窗口，表现为「图标在、hover 和 click 都没反应」。
+// 修法是在插件自己的容器上显式声明 no-drag，不依赖宿主是否补过这一条。
+test('搜索栏声明为 no-drag，不会被宿主的窗口拖拽区吞掉点击', () => {
+  const start = src.indexOf('.dsh-tb-search-container {')
+  const end = src.indexOf('}', start)
+  assert.ok(start > 0 && end > start, '找不到 .dsh-tb-search-container 样式块')
+  const block = src.slice(start, end)
+  assert.match(block, /-webkit-app-region:\s*no-drag\s*!important/, '必须覆盖宿主 tabs 行的 drag')
+})

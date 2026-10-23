@@ -675,6 +675,10 @@ html.dark .dsh-tb-left-capsule:hover {
   user-select: none !important;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
   box-sizing: border-box !important;
+  /* 宿主把整个 tabs 行设成窗口拖拽区（-webkit-app-region: drag），
+     搜索栏插在里面时会吞掉 hover / click，表现为「有图标但点不动」。 */
+  -webkit-app-region: no-drag !important;
+  app-region: no-drag !important;
 }
 
 /* 不是当前实例的搜索栏（热重载残影）绝不显示 */
