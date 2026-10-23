@@ -677,6 +677,11 @@ html.dark .dsh-tb-left-capsule:hover {
   box-sizing: border-box !important;
 }
 
+/* 不是当前实例的搜索栏（热重载残影）绝不显示 */
+.dsh-tb-search-container[data-dsh-tb-stale="1"] {
+  display: none !important;
+}
+
 /* 折叠状态下的微型 Ghost 图标按钮 (无实体突兀背景、无边框、无阴影) */
 .dsh-tb-search-trigger {
   width: 24px !important;
@@ -1252,6 +1257,28 @@ html.dark .dsh-tb-run-select {
     // ── Main Plugin Factory ─────────────────────────────────────────────────
     function apply(ctx) {
       ensureStyles()
+
+      // 单实例守卫：DSH 热重载（bundle 重建 / 会话切换）会重新执行 apply，
+      // 旧实例的 tick 仍在跑、DOM 仍在页面上，于是每重载一次就多一套搜索框。
+      // 这里让新实例接管：先停掉上一个实例的定时器并移除它插入的节点。
+      const instanceKey = '__dshTurnBookmarksInstance'
+      const previous = Array.isArray(window[instanceKey]) ? window[instanceKey] : []
+      for (const old of previous) {
+        try {
+          old?.dispose?.()
+        } catch {
+          // 旧实例清理失败不应阻断新实例挂载
+        }
+      }
+      document.querySelectorAll('.dsh-tb-search-container, .dsh-tb-bar').forEach((el) => {
+        el.setAttribute('data-dsh-tb-stale', '1')
+      })
+      document.querySelectorAll('.dsh-tb-popover, .dsh-tb-left-rail').forEach((el) => el.remove())
+
+      // 新实例一挂载就登记；之后被更新的实例取代时，本实例的 tick 会自行退场。
+      const instance = { dispose: null }
+      const instanceList = [instance]
+      window[instanceKey] = instanceList
 
       const sessionsRef = ctx.get('@deepseek-ai/dsh-api-session-controller') || ctx.get('sessions')
       let activeSessionId = getSessionIdFromEnvironment(sessionsRef)
@@ -3657,17 +3684,26 @@ html.dark .dsh-tb-run-select {
       }
 
       // ── Create Control Bar DOM Once (默认单图标 + 平滑展开搜索栏) ───────────────
-      function ensureControlBar() {
-        // Clean up any stale duplicate bars
-        const existingBars = document.querySelectorAll('.dsh-tb-search-container, .dsh-tb-bar')
-        if (existingBars.length > 1) {
-          for (let i = 1; i < existingBars.length; i++) existingBars[i].remove()
-        }
+      // 热重载遗留的旧实例不在登记表里，却仍会按自己的 tick 把搜索栏插回来。
+      // 每次刷新界面时收一遍：只保留本实例的这一份，其余都是残影。
+      function pruneForeignBars() {
+        const all = document.querySelectorAll('.dsh-tb-search-container, .dsh-tb-bar')
+        all.forEach((el) => {
+          if (el !== barEl) el.setAttribute('data-dsh-tb-stale', '1')
+        })
+      }
 
-        if (barEl && document.body.contains(barEl)) return barEl
+      function ensureControlBar() {
+        // 只保留本实例的搜索栏：其它都是热重载或旧实例留下的残影
+        if (barEl && document.body.contains(barEl)) {
+          pruneForeignBars()
+          return barEl
+        }
+        pruneForeignBars()
 
         barEl = document.createElement('div')
         barEl.className = 'dsh-tb-search-container'
+        barEl.removeAttribute('data-dsh-tb-stale')
 
         // 1. Search Trigger Button (折叠态轻量 Ghost 图标按钮，融入顶栏)
         searchToggleEl = document.createElement('button')
@@ -3840,8 +3876,16 @@ html.dark .dsh-tb-run-select {
       // 仅保留搜索框内部的局部按键（Enter / Shift+Enter 跳转、Esc 收起），
       // 那只在用户已点开搜索框并聚焦其中时生效，不劫持全局键盘。
 
+      let disposed = false
       let loopTimer = null
       function tick() {
+        const alive = Array.isArray(window[instanceKey]) && window[instanceKey].includes(instance)
+        if (!alive) {
+          if (loopTimer) clearInterval(loopTimer)
+          if (enhanceTimer) clearTimeout(enhanceTimer)
+          instance.dispose?.()
+          return
+        }
         const currentSid = getSessionIdFromEnvironment(sessionsRef, activeSessionId)
         if (currentSid !== activeSessionId) {
           activeSessionId = currentSid
@@ -3855,6 +3899,7 @@ html.dark .dsh-tb-run-select {
           renderControlBarState()
         }
         mountControlBar()
+        pruneForeignBars()
         updateRailMarks()
         updateLeftBookmarkRail()
         injectMessageStarButtons()
@@ -3866,9 +3911,16 @@ html.dark .dsh-tb-run-select {
 
       let enhanceTimer = null
       const runEnhance = () => {
+        const alive = Array.isArray(window[instanceKey]) && window[instanceKey].includes(instance)
+        if (!alive) {
+          if (enhanceTimer) clearTimeout(enhanceTimer)
+          instance.dispose?.()
+          return
+        }
         if (observer) observer.disconnect()
         try {
           mountControlBar()
+          pruneForeignBars()
           updateRailMarks()
           updateLeftBookmarkRail()
           injectMessageStarButtons()
@@ -3898,7 +3950,12 @@ html.dark .dsh-tb-run-select {
       const onWindowResize = () => { updateLeftBookmarkRail() }
       window.addEventListener('resize', onWindowResize)
 
-      return () => {
+      const dispose = () => {
+        if (disposed) return
+        disposed = true
+        if (Array.isArray(window[instanceKey])) {
+          window[instanceKey] = window[instanceKey].filter((item) => item !== instance)
+        }
         if (loopTimer) clearInterval(loopTimer)
         observer.disconnect()
         clearHighlights()
@@ -3906,9 +3963,10 @@ html.dark .dsh-tb-run-select {
         window.removeEventListener('resize', onWindowResize)
         popoverEl?.remove()
         leftRailEl?.remove()
-        document.getElementById(CSS_ID)?.remove()
         barEl?.remove()
       }
+      instance.dispose = dispose
+      return dispose
     }
 
     module.exports.apply = apply
