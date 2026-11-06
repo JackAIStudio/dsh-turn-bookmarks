@@ -25,6 +25,9 @@ const PERMISSION_LABELS = {
 
 const PERMISSION_OPTIONS = ['read-only', 'workspace-write', 'danger-full-access']
 
+/** Thinking levels in ascending effort; the last level a model offers is its strongest. */
+const EFFORT_ORDER = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
 function sameSelection(left, right) {
   if (left === right) return true
   if (left == null || right == null) return false
@@ -143,11 +146,53 @@ function findModel(groups, selection) {
   return null
 }
 
+/**
+ * Strongest thinking level a model advertises, or null when it has none.
+ *
+ * `off` is never the strongest choice, and a provider that names its tiers
+ * differently (for example `extra-high`) still has one top tier. Known levels
+ * rank by effort; an unrecognized tier ranks just above `high`, where the
+ * vendor-specific top tiers sit.
+ */
+function topEffort(model) {
+  const efforts = (model && model.reasoning && model.reasoning.efforts) || []
+  let top = null
+  let topRank = -2
+  for (const level of efforts) {
+    if (!level || typeof level.id !== 'string' || level.id === '' || level.id === 'off') continue
+    const known = EFFORT_ORDER.indexOf(level.id)
+    const rank = known === -1 ? EFFORT_ORDER.indexOf('high') + 0.5 : known
+    if (rank > topRank) {
+      topRank = rank
+      top = level.id
+    }
+  }
+  return top
+}
+
+/** Level the provider itself advertises as the model default. */
+function providerDefaultOf(model) {
+  const declared = model && model.reasoning && model.reasoning.defaultEffort
+  if (typeof declared === 'string' && declared !== '') return declared
+  return topEffort(model)
+}
+
+/**
+ * The level a fresh model pick starts on: the strongest one it offers.
+ *
+ * A provider without a published default used to fall through to the first
+ * list entry — `off` or `low`. Switching a model therefore answered with the
+ * weakest effort even when a Max tier existed.
+ */
+function preferredEffortOf(model) {
+  return topEffort(model) || providerDefaultOf(model)
+}
+
 function normalizeEffort(groups, selection) {
   const copy = cloneSelection(selection)
   if (!copy || copy.reasoningEffort) return copy
   const found = findModel(groups, copy)
-  const fallback = found && found.model && found.model.reasoning && found.model.reasoning.defaultEffort
+  const fallback = found && providerDefaultOf(found.model)
   if (typeof fallback === 'string' && fallback !== '') copy.reasoningEffort = fallback
   return copy
 }
@@ -160,7 +205,7 @@ function withModel(groups, selection, provider, modelId) {
   const previous = selection && selection.reasoningEffort
   const sameModel = !!(selection && selection.provider === provider && selection.model === modelId)
   const kept = sameModel && previous && efforts.some((level) => level && level.id === previous)
-  const fallback = found.model.reasoning.defaultEffort || (efforts[0] && efforts[0].id)
+  const fallback = preferredEffortOf(found.model)
   if (kept || fallback) next.reasoningEffort = kept ? previous : fallback
   return next
 }
@@ -181,10 +226,39 @@ function restoreSelection(groups, original, current) {
   const known = restored.reasoningEffort
     && efforts.some((level) => level && level.id === restored.reasoningEffort)
   if (!known) {
-    const fallback = found.model.reasoning.defaultEffort || (efforts[0] && efforts[0].id)
+    const fallback = providerDefaultOf(found.model)
     if (fallback) restored.reasoningEffort = fallback
   }
   return restored
+}
+
+/**
+ * Resolve the composer trigger's readable label back to its model and effort.
+ *
+ * `title` is `<model name> · <effort>`, and model names may themselves carry a
+ * ` · <credits>` suffix (WorkBuddy routes do). Splitting on every separator and
+ * comparing the first fragment misses exactly those models, so the longest
+ * advertised name that prefixes the label wins.
+ */
+function parseComposerLabel(groups, label) {
+  if (typeof label !== 'string' || label === '') return null
+  let match = null
+  for (const option of modelOptions(groups)) {
+    if (label !== option.name && !label.startsWith(option.name + ' · ')) continue
+    if (!match || option.name.length > match.name.length) match = option
+  }
+  if (!match) return null
+  const next = { provider: match.provider, model: match.model }
+  const rest = label === match.name ? '' : label.slice(match.name.length + 3)
+  const found = findModel(groups, next)
+  const levels = (found && found.model.reasoning && found.model.reasoning.efforts) || []
+  const level = rest && levels.find((item) => item && (item.name === rest || item.id === rest))
+  if (level) next.reasoningEffort = level.id
+  else if (rest === '') {
+    const fallback = providerDefaultOf(found && found.model)
+    if (fallback) next.reasoningEffort = fallback
+  }
+  return next
 }
 
 function effortName(model, effortId) {
@@ -305,6 +379,10 @@ const rerunSelectionApi = {
   decideChoice,
   decidePermission,
   findModel,
+  topEffort,
+  providerDefaultOf,
+  preferredEffortOf,
+  parseComposerLabel,
   normalizeEffort,
   withModel,
   restoreSelection,
@@ -890,62 +968,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
   100% { transform: scale(1.08); filter: brightness(1.2); }
 }
 
-/* ==================== 8. Message Prompt Inline Editor & Edit Button ==================== */
-
-.dsh-tb-ref-bar {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  align-items: center !important;
-  gap: 6px !important;
-  padding: 4px 6px !important;
-  background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.04)) !important;
-  border: 1px dashed var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.2)) !important;
-  border-radius: 6px !important;
-}
-
-.dsh-tb-ref-label {
-  font-size: 11px !important;
-  color: var(--dsw-alias-label-tertiary, #64748b) !important;
-  user-select: none !important;
-  display: flex !important;
-  align-items: center !important;
-  gap: 3px !important;
-}
-
-.dsh-tb-ref-chip {
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 4px !important;
-  padding: 2px 7px !important;
-  border-radius: 4px !important;
-  background: var(--dsw-alias-state-business-tertiary, rgba(37, 99, 235, 0.12)) !important;
-  color: var(--dsw-alias-state-business-primary, #3b82f6) !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  line-height: 1.4 !important;
-  user-select: none !important;
-}
-
-.dsh-tb-ref-icon {
-  width: 13px !important;
-  height: 13px !important;
-  flex: none !important;
-  display: inline-block !important;
-  vertical-align: middle !important;
-}
-
-.dsh-tb-ref-close {
-  cursor: pointer !important;
-  margin-left: 2px !important;
-  font-size: 13px !important;
-  opacity: 0.65 !important;
-  line-height: 1 !important;
-}
-
-.dsh-tb-ref-close:hover {
-  opacity: 1 !important;
-  color: #ef4444 !important;
-}
+/* ==================== 8. Message Prompt Branch Button ==================== */
 
 .dsh-tb-msg-edit {
   border: none !important;
@@ -967,227 +990,9 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
   color: var(--dsw-alias-brand-primary, #3b82f6) !important;
 }
 
-.dsh-tb-inline-editor {
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 8px !important;
-  width: 100% !important;
-  margin-top: 4px !important;
-  animation: dshTbFadeIn 0.15s ease-out !important;
-}
-
-@keyframes dshTbFadeIn {
-  from { opacity: 0; transform: translateY(-4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.dsh-tb-editor-textarea {
-  width: 100% !important;
-  min-height: 72px !important;
-  padding: 10px 14px !important;
-  box-sizing: border-box !important;
-  background: var(--dsw-alias-bg-layer-2, rgba(30, 41, 59, 0.95)) !important;
-  color: var(--dsw-alias-label-primary, #f8fafc) !important;
-  border: 1.5px solid var(--dsw-alias-brand-primary, #3b82f6) !important;
-  border-radius: 8px !important;
-  font-family: inherit !important;
-  font-size: var(--dsh-content-font-size, 14px) !important;
-  line-height: 1.5 !important;
-  resize: vertical !important;
-  outline: none !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18) !important;
-}
-
-.dsh-tb-editor-actions {
-  display: flex !important;
-  align-items: center !important;
-  justify-content: space-between !important;
-  padding: 0 2px !important;
-}
-
-.dsh-tb-editor-hint {
-  font-size: 11.5px !important;
-  color: var(--dsw-alias-label-tertiary, #64748b) !important;
-  user-select: none !important;
-}
-
-.dsh-tb-editor-btns {
-  display: flex !important;
-  gap: 8px !important;
-}
-
-/* ── 附件携带条（Prompt Edit & Fork Rerun） ── */
-.dsh-tb-attach-bar {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  align-items: center !important;
-  gap: 6px !important;
-  padding: 2px 2px 0 !important;
-}
-
-.dsh-tb-attach-label {
-  font-size: 11.5px !important;
-  color: var(--dsw-alias-label-tertiary, #64748b) !important;
-  user-select: none !important;
-  flex: none !important;
-}
-
-.dsh-tb-attach-chip {
-  display: inline-flex !important;
-  align-items: center !important;
-  gap: 6px !important;
-  max-width: 240px !important;
-  padding: 2px 6px 2px 3px !important;
-  border-radius: 6px !important;
-  border: 1px solid var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.25)) !important;
-  background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.06)) !important;
-  font-size: 11.5px !important;
-  color: var(--dsw-alias-label-secondary, #94a3b8) !important;
-}
-
-.dsh-tb-attach-chip[data-missing] {
-  border-color: var(--dsw-alias-state-error-primary, #dc2626) !important;
-  color: var(--dsw-alias-state-error-primary, #dc2626) !important;
-}
-
-.dsh-tb-attach-thumb {
-  width: 22px !important;
-  height: 22px !important;
-  border-radius: 4px !important;
-  object-fit: cover !important;
-  display: block !important;
-  flex: none !important;
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
-}
-
-.dsh-tb-attach-icon {
-  width: 22px !important;
-  height: 22px !important;
-  border-radius: 4px !important;
-  display: grid !important;
-  place-items: center !important;
-  flex: none !important;
-  font-size: 12px !important;
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
-}
-
-.dsh-tb-attach-name {
-  overflow: hidden !important;
-  text-overflow: ellipsis !important;
-  white-space: nowrap !important;
-}
-
-.dsh-tb-attach-close {
-  flex: none !important;
-  cursor: pointer !important;
-  padding: 0 3px !important;
-  border-radius: 3px !important;
-  font-size: 13px !important;
-  line-height: 1 !important;
-  color: var(--dsw-alias-label-tertiary, #64748b) !important;
-}
-
-.dsh-tb-attach-close:hover {
-  color: var(--dsw-alias-state-error-primary, #dc2626) !important;
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
-}
-
-.dsh-tb-run {
-  display: flex !important;
-  flex-direction: column !important;
-  gap: 6px !important;
-  padding: 0 2px !important;
-}
-
-.dsh-tb-run-row {
-  display: flex !important;
-  flex-wrap: wrap !important;
-  align-items: center !important;
-  gap: 6px !important;
-}
-
-.dsh-tb-run-label,
-.dsh-tb-run-note {
-  font-size: 11.5px !important;
-  color: var(--dsw-alias-label-tertiary, #64748b) !important;
-  user-select: none !important;
-}
-
-.dsh-tb-run-select {
-  max-width: 240px !important;
-  padding: 3px 8px !important;
-  border-radius: 6px !important;
-  border: 1px solid var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.25)) !important;
-  background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.06)) !important;
-  color: var(--dsw-alias-label-primary, #e2e8f0) !important;
-  font-size: 12px !important;
-  font-family: inherit !important;
-  color-scheme: light !important;
-}
-
-[data-ds-dark-theme] .dsh-tb-run-select,
-[data-theme="dark"] .dsh-tb-run-select,
-html.dark .dsh-tb-run-select {
-  color-scheme: dark !important;
-}
-
-.dsh-tb-run-link {
-  border: none !important;
-  background: transparent !important;
-  padding: 0 !important;
-  color: var(--dsw-alias-brand-primary, #60a5fa) !important;
-  cursor: pointer !important;
-  font-size: 11.5px !important;
-}
-
-.dsh-tb-run-warn {
-  font-size: 11.5px !important;
-  color: #d97706 !important;
-}
-
-.dsh-tb-turn-model {
-  font-size: 10.5px !important;
-  line-height: 1.5 !important;
-  padding: 0 6px !important;
-  border-radius: 10px !important;
-  color: var(--dsw-alias-label-tertiary, #8b949e) !important;
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.12)) !important;
-  white-space: nowrap !important;
-  user-select: none !important;
-  cursor: default !important;
-}
-
-.dsh-tb-btn {
-  padding: 5px 14px !important;
-  border-radius: 6px !important;
-  font-size: 12px !important;
-  font-weight: 500 !important;
-  cursor: pointer !important;
-  border: 1px solid var(--dsw-alias-border-l3, rgba(128, 128, 128, 0.25)) !important;
-  background: var(--dsw-alias-bg-layer-1, rgba(255, 255, 255, 0.06)) !important;
-  color: var(--dsw-alias-label-secondary, #94a3b8) !important;
-  transition: all 0.15s ease !important;
-}
-
-.dsh-tb-btn:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.18)) !important;
-  color: var(--dsw-alias-label-primary, #ffffff) !important;
-}
-
-.dsh-tb-btn-primary {
-  background: var(--dsw-alias-brand-primary, #2563eb) !important;
-  color: #ffffff !important;
-  border: 1px solid transparent !important;
-}
-
-.dsh-tb-btn-primary:hover {
-  background: #1d4ed8 !important;
-  color: #ffffff !important;
-}
-
-.dsh-tb-btn-primary:disabled {
-  opacity: 0.6 !important;
-  cursor: not-allowed !important;
+.dsh-tb-msg-edit-busy {
+  opacity: 0.55 !important;
+  cursor: progress !important;
 }
     `
 
@@ -1570,13 +1375,6 @@ html.dark .dsh-tb-run-select {
       }
 
       /** 附件体积的可读文本（用于携带条上的提示）。 */
-      function formatAttachmentBytes(bytes) {
-        if (!Number.isFinite(bytes) || bytes < 0) return ''
-        if (bytes < 1024) return `${bytes} B`
-        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-      }
-
       function reloadBookmarks() {
         // 关键：这次同步绑定"发起请求时"的会话 id。
         // 旧实现在响应回来时读的是全局 activeSessionId —— 只要用户在这段时间里切换了会话，
@@ -1770,7 +1568,7 @@ html.dark .dsh-tb-run-select {
             const editBtn = document.createElement('button')
             editBtn.className = 'dsh-tb-msg-edit'
             editBtn.type = 'button'
-            editBtn.title = `编辑第 ${turn} 轮提示词并从此处重新运行`
+            editBtn.title = `从第 ${turn} 轮分支：提示词和附件带进新会话，由你决定怎么发`
             editBtn.setAttribute('aria-label', editBtn.title)
             editBtn.innerHTML = `
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -1781,7 +1579,7 @@ html.dark .dsh-tb-run-select {
             const onEdit = (e) => {
               e.stopPropagation()
               e.preventDefault()
-              openInlineEditor(row, turn, userBubble)
+              forkTurnIntoNewSession(turn, userBubble, editBtn)
             }
             editBtn.addEventListener('click', onEdit, { capture: true })
             actionsBar.appendChild(editBtn)
@@ -1789,759 +1587,51 @@ html.dark .dsh-tb-run-select {
         }
       }
 
-      // ── Inline Prompt Editor & Fork-Rerun Engine ──────────────────────────
-      function mountRerunControls(row, turn, ui) {
-        const {
-          sameSelection,
-          sameRoute,
-          projectRerunContext,
-          decideChoice,
-          decidePermission,
-          normalizeEffort,
-          withModel,
-          restoreSelection,
-          findModel,
-          cloneSelection,
-          selectionLabel,
-          modelOptions,
-          permissionLabel,
-          PERMISSION_LABELS,
-          permissionChoices,
-          rerunButtonLabel,
-          stillRunLabel,
-          parseRateLimit,
-        } = rerunSelection
-        const SEP = String.fromCharCode(9)
-
-        const box = document.createElement('div')
-        box.className = 'dsh-tb-run'
-        const status = document.createElement('div')
-        status.className = 'dsh-tb-run-note'
-        status.dataset.dshTbRun = 'status'
-        status.textContent = '正在读取这次要用的模型和权限…'
-        const modelRow = document.createElement('div')
-        modelRow.className = 'dsh-tb-run-row'
-        modelRow.style.display = 'none'
-        const modelLabel = document.createElement('span')
-        modelLabel.className = 'dsh-tb-run-label'
-        modelLabel.textContent = '将使用'
-        const modelSelect = document.createElement('select')
-        modelSelect.className = 'dsh-tb-run-select'
-        modelSelect.setAttribute('aria-label', '这次重新运行使用的模型')
-        const effortSelect = document.createElement('select')
-        effortSelect.className = 'dsh-tb-run-select'
-        effortSelect.setAttribute('aria-label', '这次重新运行的思考程度')
-        modelRow.append(modelLabel, modelSelect, effortSelect)
-        const follow = document.createElement('div')
-        follow.className = 'dsh-tb-run-note'
-        follow.dataset.dshTbRun = 'follow'
-        follow.style.display = 'none'
-        const permissionRow = document.createElement('div')
-        permissionRow.className = 'dsh-tb-run-row'
-        permissionRow.style.display = 'none'
-        const permissionName = document.createElement('span')
-        permissionName.className = 'dsh-tb-run-label'
-        permissionName.textContent = '权限'
-        const permissionSelect = document.createElement('select')
-        permissionSelect.className = 'dsh-tb-run-select'
-        permissionSelect.setAttribute('aria-label', '这次重新运行使用的权限')
-        const permissionNote = document.createElement('span')
-        permissionNote.className = 'dsh-tb-run-note'
-        permissionNote.dataset.dshTbRun = 'permission'
-        permissionRow.append(permissionName, permissionSelect, permissionNote)
-        const warn = document.createElement('div')
-        warn.className = 'dsh-tb-run-warn'
-        warn.dataset.dshTbRun = 'warn'
-        warn.style.display = 'none'
-        box.append(status, modelRow, follow, permissionRow, warn)
-
-        const stillBtn = document.createElement('button')
-        stillBtn.type = 'button'
-        stillBtn.className = 'dsh-tb-btn'
-        stillBtn.style.display = 'none'
-        ui.btns.insertBefore(stillBtn, ui.runBtn)
-
-        const state = {
-          ready: false,
-          busy: false,
-          touchedModel: false,
-          touchedPermission: false,
-          groups: [],
-          original: null,
-          composer: null,
-          chosen: null,
-          followedModel: false,
-          followedPermission: false,
-          originalPermission: null,
-          composerPermission: null,
-          chosenPermission: null,
-          rateLimit: null,
-        }
-        let rendering = false
-
-        function optionValue(selection) {
-          return selection ? selection.provider + SEP + selection.model : ''
-        }
-
-        function fillSelect(select, options, value) {
-          const previous = select.value
-          select.replaceChildren()
-          for (const option of options) {
-            const node = document.createElement('option')
-            node.value = option.value
-            node.textContent = option.label
-            select.appendChild(node)
-          }
-          const known = Array.from(select.options).some((option) => option.value === value)
-          if (value && !known) {
-            const node = document.createElement('option')
-            node.value = value
-            node.textContent = value
-            select.appendChild(node)
-          }
-          if (value) select.value = value
-          else if (previous) select.value = previous
-        }
-
-        function blockingNow() {
-          return !!(state.rateLimit && !state.rateLimit.expired && state.original && state.chosen && sameRoute(state.chosen, state.original))
-        }
-
-        function linkButton(label, onClick) {
-          const button = document.createElement('button')
-          button.type = 'button'
-          button.className = 'dsh-tb-run-link'
-          button.textContent = label
-          button.addEventListener('click', onClick)
-          return button
-        }
-
-        function render() {
-          rendering = true
-          try {
-            const blocking = blockingNow()
-            ui.runBtn.textContent = state.ready
-              ? rerunButtonLabel(state.groups, state.chosen, state.original, blocking)
-              : '读取模型…'
-            ui.runBtn.disabled = !state.ready || state.busy
-            stillBtn.style.display = blocking ? '' : 'none'
-            stillBtn.textContent = stillRunLabel(state.groups, state.original)
-            stillBtn.disabled = state.busy
-            ui.hint.textContent = blocking
-              ? '⌘ Enter 仍用当前模型重跑 · Esc 取消'
-              : '⌘ Enter 重新运行 · Esc 取消'
-
-            if (!state.chosen) {
-              status.style.setProperty('display', 'block', 'important')
-              status.textContent = state.ready
-                ? '没读到这条消息的模型，重跑会沿用分叉时带上的设置。'
-                : '正在读取这次要用的模型和权限…'
-              modelRow.style.setProperty('display', 'none', 'important')
-            } else {
-              status.style.setProperty('display', 'none', 'important')
-              modelRow.style.setProperty('display', 'flex', 'important')
-              const options = modelOptions(state.groups).map((option) => ({
-                value: option.provider + SEP + option.model,
-                label: option.label,
-              }))
-              fillSelect(modelSelect, options, optionValue(state.chosen))
-              const found = findModel(state.groups, state.chosen)
-              const efforts = (found && found.model.reasoning && found.model.reasoning.efforts) || []
-              if (efforts.length === 0) {
-                effortSelect.style.setProperty('display', 'none', 'important')
-              } else {
-                effortSelect.style.setProperty('display', '', 'important')
-                fillSelect(
-                  effortSelect,
-                  efforts.map((level) => ({ value: level.id, label: '思考 ' + (level.name || level.id) })),
-                  state.chosen.reasoningEffort || '',
-                )
-              }
-            }
-
-            follow.replaceChildren()
-            const showOriginal = state.original && state.chosen && !sameSelection(state.chosen, state.original)
-            if (!showOriginal) {
-              follow.style.setProperty('display', 'none', 'important')
-            } else {
-              follow.style.setProperty('display', 'block', 'important')
-              follow.append(state.followedModel
-                ? '已跟上输入框，原来是 ' + selectionLabel(state.groups, state.original)
-                : '这条上次是 ' + selectionLabel(state.groups, state.original))
-              follow.append(document.createTextNode(' · '))
-              follow.append(linkButton('改回上次', () => {
-                state.touchedModel = true
-                state.chosen = restoreSelection(state.groups, state.original, state.composer)
-                state.followedModel = false
-                render()
-              }))
-            }
-
-            const permissionDiffers = !!(state.originalPermission && state.composerPermission
-              && state.originalPermission !== state.composerPermission)
-            const permissionMoved = !!(state.chosenPermission && state.originalPermission
-              && state.chosenPermission !== state.originalPermission)
-            if (!permissionDiffers && !permissionMoved) {
-              permissionRow.style.setProperty('display', 'none', 'important')
-            } else {
-              permissionRow.style.setProperty('display', 'flex', 'important')
-              fillSelect(
-                permissionSelect,
-                permissionChoices(state.originalPermission, state.composerPermission).map((preset) => ({
-                  value: preset,
-                  label: permissionLabel(preset),
-                })),
-                state.chosenPermission || '',
-              )
-              permissionNote.replaceChildren()
-              if (state.originalPermission && state.chosenPermission !== state.originalPermission) {
-                permissionNote.append(state.followedPermission
-                  ? '已跟上输入框，原来是 ' + permissionLabel(state.originalPermission)
-                  : '这条上次是 ' + permissionLabel(state.originalPermission))
-                permissionNote.append(document.createTextNode(' · '))
-                permissionNote.append(linkButton('改回上次', () => {
-                  state.touchedPermission = true
-                  state.chosenPermission = state.originalPermission
-                  state.followedPermission = false
-                  render()
-                }))
-              }
-            }
-
-            if (state.rateLimit && state.original) {
-              const when = state.rateLimit.resetAt ? '，' + state.rateLimit.resetAt + ' 恢复' : ''
-              const label = selectionLabel(state.groups, state.original)
-              warn.style.setProperty('display', 'block', 'important')
-              warn.textContent = blocking ? label + ' 已限流' + when : '原来的 ' + label + ' 已限流' + when
-            } else {
-              warn.style.setProperty('display', 'none', 'important')
-            }
-            modelSelect.disabled = state.busy
-            effortSelect.disabled = state.busy
-            permissionSelect.disabled = state.busy
-          } finally {
-            rendering = false
-          }
-        }
-
-        modelSelect.addEventListener('change', () => {
-          if (rendering) return
-          const parts = modelSelect.value.split(SEP)
-          if (parts.length < 2 || !parts[0] || !parts[1]) return
-          state.touchedModel = true
-          state.chosen = withModel(state.groups, state.chosen, parts[0], parts[1])
-          state.followedModel = sameSelection(state.chosen, state.composer)
-          render()
-        })
-        effortSelect.addEventListener('change', () => {
-          if (rendering || !state.chosen) return
-          state.touchedModel = true
-          state.chosen = {
-            provider: state.chosen.provider,
-            model: state.chosen.model,
-            reasoningEffort: effortSelect.value,
-          }
-          state.followedModel = sameSelection(state.chosen, state.composer)
-          render()
-        })
-        permissionSelect.addEventListener('change', () => {
-          if (rendering) return
-          state.touchedPermission = true
-          state.chosenPermission = permissionSelect.value
-          state.followedPermission = state.chosenPermission === state.composerPermission
-          render()
-        })
-
-        function rateLimitNear(target) {
-          const chunks = []
-          if (target && target.innerText) chunks.push(target.innerText)
-          let sibling = target && target.nextElementSibling
-          for (let i = 0; sibling && i < 4; i += 1) {
-            chunks.push(sibling.innerText || '')
-            if (sibling.querySelector && sibling.querySelector('.dsh-tb-msg-edit')) break
-            sibling = sibling.nextElementSibling
-          }
-          return parseRateLimit(chunks.join(String.fromCharCode(10)))
-        }
-
-        /**
-         * Read the composer's live model and permission, not a cached projection.
-         * The picker can change while this popover is open.
-         */
-        function readComposerNow(groups, fallbackModel, fallbackPermission) {
-          let model = fallbackModel
-          let permission = fallbackPermission
-          try {
-            const trigger = document.querySelector('[aria-label^="选择模型"],[aria-label^="Select model"]')
-            const label = trigger && trigger.getAttribute('title')
-            if (label) {
-              const parts = label.split(' · ')
-              const match = (modelOptions(groups) || []).find((option) => option.name === parts[0] || option.label === parts[0])
-              if (match) {
-                const next = { provider: match.provider, model: match.model }
-                const effort = parts.slice(1).join(' · ')
-                const found = findModel(groups, next)
-                const level = effort && ((found && found.model.reasoning && found.model.reasoning.efforts) || [])
-                  .find((item) => item && (item.name === effort || item.id === effort))
-                if (level) next.reasoningEffort = level.id
-                model = next
-              }
-            }
-          } catch (err) {
-            console.warn('[dsh-turn-bookmarks] Failed to read the composer model:', err)
-          }
-          try {
-            const button = Array.from(document.querySelectorAll('[data-composer-card] button'))
-              .find((node) => /仅可查看|工作区内修改|完全权限|Read Only|Workspace Write|Full access/.test(node.textContent || ''))
-            const text = button && button.textContent
-            const preset = text && Object.keys(PERMISSION_LABELS).find((key) => PERMISSION_LABELS[key] === text.trim())
-            if (preset) permission = preset
-          } catch (err) {
-            console.warn('[dsh-turn-bookmarks] Failed to read the composer permission:', err)
-          }
-          return { model, permission }
-        }
-
-        async function load() {
-          state.rateLimit = rateLimitNear(row)
-          const sessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
-          let entries = []
-          try {
-            const sessionObj = sessionsRef && sessionsRef.binding && sessionsRef.binding(sessionId)
-            entries = sessionObj?.session?.eventSource?.getSnapshot?.()?.entries || []
-          } catch (err) {
-            console.warn('[dsh-turn-bookmarks] Failed to read session events for rerun model:', err)
-          }
-          const projected = projectRerunContext(entries, turn)
-          let groups = []
-          let composer = projected.latest || null
-          let composerPermission = projected.permissionLatest
-          try {
-            const directories = ctx.get('modelDirectories')
-            const directory = directories && directories.directoryFor && directories.directoryFor(sessionId)
-            if (directory && directory.load) await directory.load()
-            const snap = directory && directory.store && directory.store.getSnapshot && directory.store.getSnapshot()
-            if (snap) {
-              groups = snap.groups || []
-              if (snap.current && snap.current.provider && snap.current.model) composer = snap.current
-            }
-          } catch (err) {
-            console.warn('[dsh-turn-bookmarks] model directory unavailable:', err)
-          }
-          try {
-            const sessionObj = sessionsRef && sessionsRef.binding && sessionsRef.binding(sessionId)
-            const permissionSnap = sessionObj?.session?.projections?.faceOf?.('permissions')?.getSnapshot?.()
-            if (permissionSnap && permissionSnap.currentValue) composerPermission = permissionSnap.currentValue
-          } catch {}
-          state.groups = groups
-          state.original = normalizeEffort(groups, projected.atTurn)
-          state.originalPermission = projected.permissionAtTurn
-          const live = readComposerNow(groups, composer, composerPermission)
-          state.composer = normalizeEffort(groups, live.model)
-          state.composerPermission = live.permission
-          if (!state.touchedModel) {
-            const decision = decideChoice(state.original, state.composer)
-            state.chosen = decision.chosen
-            state.followedModel = decision.followedCurrent
-          } else {
-            state.chosen = normalizeEffort(groups, state.chosen)
-          }
-          if (!state.touchedPermission) {
-            const permissionDecision = decidePermission(state.originalPermission, state.composerPermission)
-            state.chosenPermission = permissionDecision.chosen
-            state.followedPermission = permissionDecision.followedCurrent
-          }
-          state.ready = true
-          render()
-        }
-
-        load().catch((err) => {
-          console.warn('[dsh-turn-bookmarks] Failed to prepare rerun model controls:', err)
-          state.ready = true
-          render()
-        })
-        render()
-
-        return {
-          element: box,
-          stillBtn,
-          mode() {
-            return blockingNow() ? 'switch-model' : 'submit'
-          },
-          focusModel() {
-            modelSelect.focus()
-            if (typeof modelSelect.showPicker === 'function') {
-              try { modelSelect.showPicker() } catch {}
-            }
-          },
-          choice() {
-            return {
-              model: state.chosen,
-              composerModel: state.composer,
-              permission: state.chosenPermission,
-            }
-          },
-          /** 限流时「仍用上次重跑」提交的必须是这条消息原本的选择。 */
-          originalChoice() {
-            return {
-              model: state.original,
-              composerModel: state.composer,
-              permission: state.originalPermission || state.chosenPermission,
-            }
-          },
-          ready() {
-            return state.ready && !state.busy
-          },
-          setBusy(busy) {
-            state.busy = busy
-            if (!busy) render()
-            else {
-              ui.runBtn.disabled = true
-              stillBtn.disabled = true
-              modelSelect.disabled = true
-              effortSelect.disabled = true
-              permissionSelect.disabled = true
-            }
-          },
-        }
-      }
-
-      function openInlineEditor(row, turn, userBubble) {
-        if (row.querySelector('.dsh-tb-inline-editor')) return
-        const fallbackText = userBubble.innerText.trim()
-        userBubble.style.display = 'none'
-
-        const editor = document.createElement('div')
-        editor.className = 'dsh-tb-inline-editor'
-
-        // 引用会话气泡展示栏
-        const refBar = document.createElement('div')
-        refBar.className = 'dsh-tb-ref-bar'
-        refBar.style.display = 'none'
-
-        const refLabel = document.createElement('span')
-        refLabel.className = 'dsh-tb-ref-label'
-        refLabel.textContent = '引用会话：'
-        refBar.appendChild(refLabel)
-
-        const refChipsWrap = document.createElement('div')
-        refChipsWrap.style.display = 'contents'
-        refBar.appendChild(refChipsWrap)
-
-        // 附件携带区：显示这次「重新运行」会一起带进新分支的图片 / 附件（可逐个移除）
-        const attachBar = document.createElement('div')
-        attachBar.className = 'dsh-tb-attach-bar'
-        attachBar.style.display = 'none'
-
-        const attachLabel = document.createElement('span')
-        attachLabel.className = 'dsh-tb-attach-label'
-        attachLabel.textContent = '带上附件：'
-        attachBar.appendChild(attachLabel)
-
-        const attachChipsWrap = document.createElement('div')
-        attachChipsWrap.style.display = 'contents'
-        attachBar.appendChild(attachChipsWrap)
-
-        const textarea = document.createElement('textarea')
-        textarea.className = 'dsh-tb-editor-textarea'
-        textarea.value = fallbackText
-        textarea.placeholder = '编辑你的提示词...'
-
-        const autoResize = () => {
-          textarea.style.height = 'auto'
-          textarea.style.height = Math.max(72, Math.min(380, textarea.scrollHeight + 4)) + 'px'
-        }
-        textarea.addEventListener('input', autoResize)
-
-        const footer = document.createElement('div')
-        footer.className = 'dsh-tb-editor-actions'
-
-        const hint = document.createElement('span')
-        hint.className = 'dsh-tb-editor-hint'
-        hint.textContent = '⌘ Enter 重新运行 · Esc 取消'
-
-        const btns = document.createElement('div')
-        btns.className = 'dsh-tb-editor-btns'
-
-        const cancelBtn = document.createElement('button')
-        cancelBtn.className = 'dsh-tb-btn'
-        cancelBtn.type = 'button'
-        cancelBtn.textContent = '取消'
-
-        const runBtn = document.createElement('button')
-        runBtn.className = 'dsh-tb-btn dsh-tb-btn-primary'
-        runBtn.type = 'button'
-        runBtn.textContent = '重新运行'
-
-        btns.appendChild(cancelBtn)
-        btns.appendChild(runBtn)
-        footer.appendChild(hint)
-        footer.appendChild(btns)
-
-        const controls = mountRerunControls(row, turn, { runBtn, hint, btns })
-
-        editor.appendChild(refBar)
-        editor.appendChild(attachBar)
-        editor.appendChild(textarea)
-        editor.appendChild(controls.element)
-        editor.appendChild(footer)
-
-        userBubble.parentNode.insertBefore(editor, userBubble.nextSibling)
-        autoResize()
-        textarea.focus()
-        textarea.setSelectionRange(textarea.value.length, textarea.value.length)
-
-        // 会话引用的状态存储：[{ label, uri, mention }]
-        let activeReferences = []
-        let rawOriginalPrompt = fallbackText
-
-        // 附件携带状态：本轮原消息的图片/附件。重跑时逐个读回字节，随提示词一起进新分支。
-        // 结构：{ kind, attachmentId, name, mediaType, width, height, bytes, previewUrl, cachedBytes, missing }
-        let carriedAttachments = []
-
-        const renderAttachChips = () => {
-          attachChipsWrap.innerHTML = ''
-          if (carriedAttachments.length === 0) {
-            attachBar.style.display = 'none'
-            return
-          }
-          attachBar.style.display = 'flex'
-          for (const item of carriedAttachments) {
-            const name = item.name || (item.kind === 'image' ? '图片' : '附件')
-            const dims = item.kind === 'image' && Number.isSafeInteger(item.width) && Number.isSafeInteger(item.height)
-              ? ` ${item.width}×${item.height}`
-              : (Number.isSafeInteger(item.bytes) ? ` ${formatAttachmentBytes(item.bytes)}` : '')
-
-            const chip = document.createElement('span')
-            chip.className = 'dsh-tb-attach-chip'
-            chip.title = `${name}${dims}` + (item.missing ? '（本地已找不到该附件，重跑时会跳过）' : '')
-            if (item.missing) chip.dataset.missing = '1'
-
-            if (item.kind === 'image' && typeof item.previewUrl === 'string' && item.previewUrl !== '') {
-              const thumb = document.createElement('img')
-              thumb.className = 'dsh-tb-attach-thumb'
-              thumb.src = item.previewUrl
-              thumb.alt = name
-              chip.appendChild(thumb)
-            } else {
-              const icon = document.createElement('span')
-              icon.className = 'dsh-tb-attach-icon'
-              icon.textContent = item.kind === 'image' ? '🖼' : '📄'
-              chip.appendChild(icon)
-            }
-
-            const nameEl = document.createElement('span')
-            nameEl.className = 'dsh-tb-attach-name'
-            nameEl.textContent = name
-            chip.appendChild(nameEl)
-
-            const delBtn = document.createElement('span')
-            delBtn.className = 'dsh-tb-attach-close'
-            delBtn.textContent = '×'
-            delBtn.title = '这次重跑不带这个附件'
-            delBtn.addEventListener('click', (e) => {
-              e.stopPropagation()
-              carriedAttachments = carriedAttachments.filter((candidate) => candidate !== item)
-              renderAttachChips()
-            })
-            chip.appendChild(delBtn)
-            attachChipsWrap.appendChild(chip)
-          }
-        }
-
-        const renderRefChips = () => {
-          refChipsWrap.innerHTML = ''
-          if (activeReferences.length === 0) {
-            refBar.style.display = 'none'
-            return
-          }
-          refBar.style.display = 'flex'
-          for (const ref of activeReferences) {
-            const chip = document.createElement('span')
-            chip.className = 'dsh-tb-ref-chip'
-            chip.title = ref.mention || ref.label
-            chip.innerHTML = `
-              <svg class="dsh-tb-ref-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2">
-                <path d="M5 6.75H11" stroke="currentColor"/>
-                <path d="M5 9H8" stroke="currentColor"/>
-                <path d="M2.37 11.25C1.59 9.89 1.32 8.3 1.62 6.76C1.92 5.22 2.76 3.84 4 2.88C5.23 1.91 6.77 1.43 8.34 1.51C9.9 1.59 11.39 2.24 12.51 3.32C13.64 4.41 14.34 5.87 14.48 7.43C14.61 8.99 14.18 10.55 13.26 11.82C12.34 13.09 10.99 13.98 9.46 14.33C8.19 14.63 6.86 14.53 5.65 14.06C5.17 13.87 4.77 13.49 4.27 13.4C3.67 13.28 2.95 13.56 2.04 14.33" stroke="currentColor"/>
-              </svg>
-              <span>${ref.label}</span>
-            `
-            const delBtn = document.createElement('span')
-            delBtn.className = 'dsh-tb-ref-close'
-            delBtn.textContent = '×'
-            delBtn.title = '移除此会话引用'
-            delBtn.addEventListener('click', (e) => {
-              e.stopPropagation()
-              activeReferences = activeReferences.filter((r) => r.mention !== ref.mention)
-              renderRefChips()
-            })
-            chip.appendChild(delBtn)
-            refChipsWrap.appendChild(chip)
-          }
-        }
-
-        // 异步解析底层真实的原始提示词与气泡引用
-        ;(async () => {
-          try {
-            const content = await resolveTurnContent(turn, userBubble)
-            const prompt = content && typeof content.text === 'string' ? content.text : ''
-            if (prompt) {
-              rawOriginalPrompt = prompt
-              const SESSION_MENTION_RE = /@\[((?:\.|[^\]])*)\]\((dsh-session:[A-Za-z0-9_-]+)\)|(dsh-session:[A-Za-z0-9_-]+)/gu
-              const refs = []
-              let match
-              const seen = new Set()
-              while ((match = SESSION_MENTION_RE.exec(prompt)) !== null) {
-                const label = match[1] || '引用会话'
-                const uri = match[2] || match[3]
-                const mention = match[0]
-                if (!seen.has(mention)) {
-                  seen.add(mention)
-                  refs.push({ label, uri, mention })
-                }
-              }
-              if (refs.length > 0) {
-                activeReferences = refs
-                renderRefChips()
-
-                // 清洗出用户可读的正文（把 @[...] 转换成直观的 @label 显示在编辑框中）
-                let cleanPrompt = prompt
-                for (const r of refs) {
-                  cleanPrompt = cleanPrompt.replaceAll(r.mention, '@' + r.label)
-                }
-                textarea.value = cleanPrompt.trim()
-                autoResize()
-              } else {
-                textarea.value = prompt.trim()
-                autoResize()
-              }
-            }
-
-            // 原消息带的图片 / 附件：显示在携带条上，重跑时一并送进新分支
-            const attachments = content && Array.isArray(content.attachments) ? content.attachments : []
-            if (attachments.length > 0) {
-              carriedAttachments = attachments.map((item) => ({ ...item }))
-              renderAttachChips()
-              // 图片先取字节：既做缩略图，也是重跑时要发送的同一份内容
-              for (const item of carriedAttachments) {
-                if (item.kind !== 'image') continue
-                prefetchCarriedImage(item).then(() => {
-                  if (document.body.contains(editor)) renderAttachChips()
-                })
-              }
-            }
-          } catch (err) {
-            console.warn('[dsh-turn-bookmarks] Failed to resolve accurate turn prompt:', err)
-          }
-        })()
-
-        /** 回收携带条自建的缩略图 blob URL（编辑器关闭时调用；图片字节已缓存在 item 上）。 */
-        const releaseCarriedPreviews = () => {
-          for (const item of carriedAttachments) {
-            if (item.previewIsObjectUrl && typeof item.previewUrl === 'string' && item.previewUrl.startsWith('blob:')) {
-              try {
-                URL.revokeObjectURL(item.previewUrl)
-              } catch {}
-              item.previewIsObjectUrl = false
-            }
-          }
-        }
-
-        const closeEditor = () => {
-          userBubble.style.display = ''
-          releaseCarriedPreviews()
-          editor.remove()
-        }
-
-        cancelBtn.addEventListener('click', closeEditor)
-
-        const restoreControls = () => {
-          cancelBtn.disabled = false
-          textarea.disabled = false
-          controls.setBusy(false)
-        }
-
-        const doSubmit = async (useOriginal) => {
-          const editedText = textarea.value.trim()
-          if (!editedText) {
-            textarea.focus()
-            return
-          }
-          if (!controls.ready()) {
-            textarea.focus()
-            return
-          }
-          if (!useOriginal && controls.mode() === 'switch-model') {
-            controls.focusModel()
-            return
-          }
-          runBtn.disabled = true
-          cancelBtn.disabled = true
-          textarea.disabled = true
-          controls.setBusy(true)
-
-          try {
-            // 合成符合 DSH 会话要求的完整带有气泡引用的提示词
-            let fullText = editedText
-            for (const ref of activeReferences) {
-              const displayTag = '@' + ref.label
-              if (fullText.includes(displayTag)) {
-                fullText = fullText.replaceAll(displayTag, ref.mention)
-              } else if (!fullText.includes(ref.mention)) {
-                // 如果用户没有在文字中保留 @label，自动前置补齐
-                fullText = ref.mention + ' ' + fullText
-              }
-            }
-
-            // 原消息带的图片 / 附件：读回字节，和编辑后的提示词一起进新分支
-            let files = []
-            const carried = carriedAttachments.slice()
-            if (carried.length > 0) {
-              runBtn.textContent = '正在读取附件...'
-              const collected = await collectCarriedFiles(carried)
-              files = collected.files
-              if (collected.failed.length > 0) {
-                const names = collected.failed
-                  .map((item) => item.name || (item.kind === 'image' ? '图片' : '附件'))
-                  .join('、')
-                const proceed = window.confirm(
-                  `有 ${collected.failed.length} 个附件读取失败：${names}\n继续重跑将不会带上这些附件，是否继续？`,
-                )
-                if (!proceed) {
-                  restoreControls()
-                  return
-                }
-              }
-            }
-
-            runBtn.textContent = '正在分叉...'
-            const choice = useOriginal ? controls.originalChoice() : controls.choice()
-            await forkAndRerunTurn(turn, fullText, files, choice)
-            closeEditor()
-          } catch (err) {
-            console.error('[dsh-turn-bookmarks] Fork & rerun failed:', err)
-            restoreControls()
-            alert('从此处重新运行失败：' + (err.message || String(err)))
-          }
-        }
-
-        runBtn.addEventListener('click', () => doSubmit(false))
-        controls.stillBtn.addEventListener('click', () => doSubmit(true))
-
-        textarea.addEventListener('keydown', (e) => {
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            closeEditor()
-          } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault()
-            doSubmit(true)
-          }
-        })
-      }
-
+      // ── Branch This Turn Into A New Session ───────────────────────────────
       const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+      /**
+       * 点 ✏️ 的入口：分叉到新会话，把这一轮的提示词和附件放回输入框。
+       *
+       * 以前是就地展开编辑器、按一下就把消息发出去；现在只做官方「在新对话
+       * 中分支」那套动作，顺手把当初的输入带过去。发不发、换不换模型、要不要
+       * 补附件，全交给用户在新会话里自己决定。
+       */
+      async function forkTurnIntoNewSession(turn, userBubble, button) {
+        if (button.disabled) return
+        const previousLabel = button.getAttribute('aria-label')
+        button.disabled = true
+        button.setAttribute('aria-label', '正在创建分支…')
+        button.classList.add('dsh-tb-msg-edit-busy')
+        try {
+          const content = await resolveTurnContent(turn, userBubble)
+          const promptText = content && typeof content.text === 'string' ? content.text : ''
+          const attachments = content && Array.isArray(content.attachments) ? content.attachments : []
+
+          let files = []
+          let failed = []
+          if (attachments.length > 0) {
+            const collected = await collectCarriedFiles(attachments)
+            files = collected.files
+            failed = collected.failed
+          }
+
+          const { seeded } = await forkAndSeedTurn(turn, promptText, files)
+          if (failed.length > 0) {
+            const names = failed
+              .map((item) => item.name || (item.kind === 'image' ? '图片' : '附件'))
+              .join('、')
+            window.alert(`新会话已打开，提示词和 ${seeded.attached} 个附件已放进输入框。\n有 ${failed.length} 个附件读不出来，需要你手动补上：${names}`)
+          }
+        } catch (err) {
+          console.error('[dsh-turn-bookmarks] Fork into new session failed:', err)
+          window.alert('没能把这一轮带到新会话：' + (err && err.message ? err.message : String(err)))
+        } finally {
+          button.disabled = false
+          if (previousLabel) button.setAttribute('aria-label', previousLabel)
+          button.classList.remove('dsh-tb-msg-edit-busy')
+        }
+      }
 
       /** 会话内容块里的附件引用（图片 / 文件），保持消息内顺序。 */
       function attachmentRefsOfContent(blocks) {
@@ -2720,36 +1810,6 @@ html.dark .dsh-tb-run-select {
       }
 
       /** 打开编辑器后取回图片字节：做缩略图，并缓存给重跑复用。 */
-      async function prefetchCarriedImage(item) {
-        if (!item || item.kind !== 'image') return
-        const sessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
-        try {
-          let payload = null
-          if (item.attachmentId) payload = await readCarriedImageViaSession(sessionId, item.attachmentId)
-          if (!payload && item.attachmentId) payload = await fetchCarriedAttachment(sessionId, item)
-          if (!payload && item.previewUrl) {
-            const res = await fetch(item.previewUrl)
-            if (res.ok) {
-              const blob = await res.blob()
-              payload = { bytes: new Uint8Array(await blob.arrayBuffer()), mediaType: blob.type || item.mediaType }
-            }
-          }
-          if (!payload || !payload.bytes || payload.bytes.length === 0) {
-            item.missing = true
-            return
-          }
-          item.cachedBytes = payload.bytes
-          if (payload.mediaType) item.mediaType = payload.mediaType
-          if (payload.name && !item.name) item.name = payload.name
-          if (!item.previewUrl) {
-            item.previewUrl = URL.createObjectURL(new Blob([payload.bytes], { type: item.mediaType || 'image/png' }))
-            item.previewIsObjectUrl = true
-          }
-        } catch (err) {
-          console.warn('[dsh-turn-bookmarks] Failed to prefetch carried image:', err)
-        }
-      }
-
       /** 把一个携带附件读成浏览器 File（图片优先官方接口，文件走宿主路由）。 */
       async function buildCarriedFile(sessionId, item) {
         const name = item.name || (item.kind === 'image' ? 'image.png' : 'file')
@@ -2800,94 +1860,79 @@ html.dark .dsh-tb-run-select {
         return { files, failed }
       }
 
-      function getRemote() {
-        try {
-          return ctx.get('remote') || ctx.get('@deepseek-ai/dsh-api-remotes') || null
-        } catch {
-          return null
+      /**
+       * 把一轮原始提示词拆成官方输入框能直接吃的结构化草稿。
+       *
+       * 历史里存的会话引用是 `@[标题](dsh-session:...)` 线格式；原样 setDraft
+       * 会显示成一长串裸文本。这里按位置还原成 reference chip，让新会话输入框
+       * 跟当初一样显示成胶囊，提交时再由官方 codec 序列化回原样。
+       */
+      function structuredDraftOfPrompt(prompt) {
+        const text = typeof prompt === 'string' ? prompt : ''
+        const references = []
+        const wire = /@\[([^\]\n]+)\]\((dsh-session:[^)\s]+)\)/gu
+        let match
+        while ((match = wire.exec(text)) !== null) {
+          references.push({
+            source: 'reference',
+            ref: match[0],
+            offset: match.index,
+            length: match[0].length,
+            label: match[1],
+            appearance: 'session',
+            clipboardText: match[0],
+          })
         }
+        if (references.length === 0) return text
+        return { text, references }
       }
 
-      async function selectModelOn(sessionId, selection) {
-        // `remote.session` is its own Cordis service; reading it off `remote`
-        // throws `cannot get property "remote.session" without inject`.
-        let sessionRemote = null
-        try {
-          sessionRemote = ctx.get('remote.session')
-        } catch {}
-        if (!sessionRemote) {
-          const remote = getRemote()
+      /** 子会话打开后，等官方输入框（conversation shell）挂上。 */
+      async function waitForInputShell(conversation, sessionId, timeoutMs = 10000) {
+        const deadline = Date.now() + timeoutMs
+        for (;;) {
           try {
-            sessionRemote = remote && remote.session
-          } catch (err) {
-            console.warn('[dsh-turn-bookmarks] remote.session is not injected:', err)
-          }
+            const shell = conversation.input?.shell?.(sessionId)
+            if (shell && shell.actions && typeof shell.actions.setDraft === 'function') return shell
+          } catch {}
+          if (Date.now() >= deadline) return null
+          await sleep(120)
         }
-        const selectModel = sessionRemote && sessionRemote.selectModel
-        if (typeof selectModel !== 'function') {
-          throw new Error('模型切换接口不可用，这次重跑无法改模型和思考程度')
-        }
-        const request = {
-          sessionId,
-          provider: selection.provider,
-          model: selection.model,
-        }
-        if (selection.reasoningEffort) request.reasoningEffort = selection.reasoningEffort
-        // 刚分叉的子会话可能还在 resume；宿主会把这种失败明确报成会话级错误。
-        let result
-        let lastError
-        for (let attempt = 0; attempt < 20; attempt += 1) {
+      }
+
+      /**
+       * 把提示词与附件放进新会话的官方输入框，不发送。
+       *
+       * 附件走 conversation.createDrafts：图片随消息一起发，文件由宿主后台上传，
+       * 落进输入框后就是原生附件卡，用户可以接着加、删、拖。这里只是把「当初
+       * 发过的附件」原样摆回去。
+       */
+      async function seedChildDraft(childId, promptText, files, shellTimeoutMs = 10000) {
+        const conversation = getConversationService()
+        if (!conversation) throw new Error('会话服务不可用，没法把提示词放进新会话')
+        const shell = await waitForInputShell(conversation, childId, shellTimeoutMs)
+        if (!shell) throw new Error('新会话的输入框没有就绪，请手动粘贴提示词')
+
+        shell.actions.setDraft(structuredDraftOfPrompt(promptText))
+
+        if (files.length === 0) return { attached: 0 }
+
+        const drafts = conversation.createDrafts(childId, files)
+        if (!shell.actions.addAttachments(drafts.map((draft) => draft.id))) {
           try {
-            result = await selectModel.call(sessionRemote, request)
-            break
-          } catch (err) {
-            lastError = err
-            const message = String(err && err.message || err)
-            if (!/not materialized|不可用|not found|resume|正在|pending/i.test(message)) throw err
-            await sleep(150)
-          }
+            conversation.releaseDraftAttachments?.(drafts)
+          } catch {}
+          throw new Error('新会话输入框当前不接受附件')
         }
-        if (result === undefined) throw lastError || new Error('切换模型超时')
-        if (result && result.ok === false) {
-          const error = result.error || {}
-          throw new Error(error.message || error.code || '切换模型失败')
-        }
+        return { attached: drafts.length }
       }
 
-      async function applyRerunChoice(childId, parentId, choice) {
-        if (!choice) return
-        if (choice.model && choice.model.provider && choice.model.model) {
-          await selectModelOn(childId, choice.model)
-          if (choice.composerModel && !rerunSelection.sameSelection(choice.model, choice.composerModel)) {
-            try {
-              await selectModelOn(parentId, choice.composerModel)
-            } catch (err) {
-              console.warn('[dsh-turn-bookmarks] 没能把输入框模型改回去:', err)
-            }
-          }
-        }
-        if (!choice.permission || choice.permission === 'custom') return
-        // 权限切换只需要会话对象，不需要 composer 就绪。
-        const sessionObj = await waitForSessionObject(childId)
-        if (!sessionObj || typeof sessionObj.command !== 'function') {
-          throw new Error('新分支还没就绪，没法切换权限')
-        }
-        let current = null
-        try {
-          current = sessionObj.projections?.faceOf?.('permissions')?.getSnapshot?.()?.currentValue || null
-        } catch {}
-        if (current === choice.permission) return
-        const result = await sessionObj.command('/permission ' + choice.permission)
-        if (result && result.ok === false) {
-          const error = result.error || {}
-          throw new Error(error.message || '切换权限失败')
-        }
-        if (result && result.value && result.value.matched === false) {
-          throw new Error('宿主没有 /permission 命令，没法切换权限')
-        }
-      }
-
-      async function forkAndRerunTurn(turn, newText, files = [], choice = null) {
+      /**
+       * 从某一轮之前分叉，并把这一轮的提示词 + 附件预填进新会话输入框。
+       *
+       * 模型、思考程度、权限一律交给官方输入框自己的选择器，这里不碰。
+       */
+      async function forkAndSeedTurn(turn, promptText, files) {
         const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
         if (!currentSessionId || currentSessionId === 'default') {
           throw new Error('未找到当前活跃会话 ID')
@@ -2948,10 +1993,7 @@ html.dark .dsh-tb-run-select {
           atSeq,
           increaseTitle: true,
         })
-
-        if (!childId) {
-          throw new Error('分叉会话未返回有效 ID')
-        }
+        if (!childId) throw new Error('分叉会话未返回有效 ID')
 
         const uiWorkspace = ctx.get('uiWorkspace')
         if (uiWorkspace && typeof uiWorkspace.openSession === 'function') {
@@ -2960,214 +2002,8 @@ html.dark .dsh-tb-run-select {
           sessionsRef.select(childId)
         }
 
-        await applyRerunChoice(childId, currentSessionId, choice)
-
-        // 原消息带的图片 / 附件一起进新分支：优先走会话服务一次提交（文本 + 附件）
-        if (files.length > 0) {
-          const sent = await trySendViaConversation(childId, newText, files)
-          if (sent) return
-          console.warn('[dsh-turn-bookmarks] 会话服务未完成提交，回退作曲器路径（会先注入附件再发送）')
-        }
-
-        const submitted = await submitPromptWhenReady(newText, files)
-        if (!submitted) {
-          throw new Error(
-            files.length > 0
-              ? '新分支已就绪，但附件未能进入输入框，已放弃自动发送（请手动附加后重发）'
-              : '新分支已就绪，但输入框未就绪，请手动发送提示词',
-          )
-        }
+        return { childId, seeded: await seedChildDraft(childId, promptText, files) }
       }
-
-      /** 等子会话在客户端就绪（binding 出现），拿到可直接发消息的会话对象。 */
-      async function waitForSessionBinding(sessionId, timeoutMs = 8000) {
-        const deadline = Date.now() + timeoutMs
-        for (;;) {
-          try {
-            const sessionObj = sessionsRef?.binding?.(sessionId)?.session
-            if (sessionObj && typeof sessionObj.prompt === 'function') return sessionObj
-          } catch {}
-          if (Date.now() >= deadline) return null
-          await sleep(150)
-        }
-      }
-
-      /** 等子会话对象出现；权限切换不依赖 prompt，别被 composer 的等待拖住。 */
-      async function waitForSessionObject(sessionId, timeoutMs = 8000) {
-        const deadline = Date.now() + timeoutMs
-        for (;;) {
-          try {
-            const sessionObj = sessionsRef?.binding?.(sessionId)?.session
-            if (sessionObj) return sessionObj
-          } catch {}
-          if (Date.now() >= deadline) return null
-          await sleep(150)
-        }
-      }
-
-      /** 等文件类草稿的后台上传结束（图片不发上传请求）。 */
-      async function waitForDraftUploads(conversation, drafts, timeoutMs = 120000) {
-        const fileDrafts = drafts.filter((draft) => draft && draft.kind === 'file')
-        if (fileDrafts.length === 0) return
-        const deadline = Date.now() + timeoutMs
-        for (;;) {
-          const uploads = conversation.fileUploads?.getSnapshot?.() || {}
-          let pending = 0
-          for (const draft of fileDrafts) {
-            const state = uploads[draft.id]
-            if (state && state.status === 'ready') continue
-            if (state && state.status === 'error') throw new Error(state.message || '附件上传失败')
-            pending += 1
-          }
-          if (pending === 0) return
-          if (Date.now() >= deadline) throw new Error('附件上传超时')
-          await sleep(150)
-        }
-      }
-
-      /** 自检：子会话是否已经收下这次提交（避免回退路径重复发送）。 */
-      function childSessionHasPrompt(sessionObj, text) {
-        try {
-          const entries = sessionObj?.eventSource?.getSnapshot?.()?.entries
-          if (!Array.isArray(entries) || entries.length === 0) return false
-          for (let i = entries.length - 1; i >= 0 && i >= entries.length - 40; i -= 1) {
-            const ev = entries[i]?.event || entries[i]
-            if (ev && ev.type === 'user/message' && Array.isArray(ev.data?.content)) {
-              const joined = textOfContentBlocks(ev.data.content)
-              if (joined !== '' && joined.includes(text.trim().slice(0, 60))) return true
-            }
-          }
-        } catch {}
-        return false
-      }
-
-      /**
-       * 附件随行主通道：经会话服务把「文本 + 附件」一次提交进新分支。
-       * 失败返回 false（草稿已释放），由调用方回退到作曲器路径。
-       * 调试开关：`window.__dshTurnBookmarksForceComposerFallback = true` 可强制走回退路径（用于验收回退分支）。
-       */
-      async function trySendViaConversation(childId, text, files) {
-        if (window.__dshTurnBookmarksForceComposerFallback === true) return false
-        const conversation = getConversationService()
-        if (
-          !conversation ||
-          typeof conversation.createDrafts !== 'function' ||
-          typeof conversation.sendSession !== 'function'
-        ) {
-          return false
-        }
-        const sessionObj = await waitForSessionBinding(childId)
-        if (!sessionObj) return false
-        let drafts = null
-        try {
-          drafts = conversation.createDrafts(childId, files)
-          const ids = drafts.map((draft) => draft.id)
-          await waitForDraftUploads(conversation, drafts)
-          const outcome = await conversation.sendSession(sessionObj, text, ids, 'queue')
-          if (outcome && outcome.kind === 'success') return true
-          console.warn('[dsh-turn-bookmarks] conversation.sendSession did not settle as success:', outcome)
-        } catch (err) {
-          console.warn('[dsh-turn-bookmarks] Conversation send with attachments failed, falling back:', err)
-        }
-        // 提交可能已经落地但回执丢失：先自检，避免回退路径重复发一条
-        await sleep(400)
-        if (childSessionHasPrompt(sessionObj, text)) return true
-        try {
-          if (drafts) conversation.releaseDraftAttachments?.(drafts)
-        } catch (err) {
-          console.warn('[dsh-turn-bookmarks] Failed to release draft attachments:', err)
-        }
-        return false
-      }
-
-      /** 把文件合成一次粘贴投给作曲器，让它走标准的附件接收流程。 */
-      async function stageFilesIntoComposer(composer, files) {
-        const conversation = getConversationService()
-        let before = null
-        try {
-          before = conversation?.draftAttachments?.size ?? null
-        } catch {}
-        const domCount = () => document.querySelectorAll(
-          '[data-composer-card] [class*="fileCard"], [data-composer-card] [class*="imageItem"], [data-composer-card] [class*="attachment"] img',
-        ).length
-        let domBefore = 0
-        try {
-          domBefore = domCount()
-        } catch {}
-        const dataTransfer = new DataTransfer()
-        for (const file of files) dataTransfer.items.add(file)
-        composer.dispatchEvent(new ClipboardEvent('paste', {
-          bubbles: true,
-          cancelable: true,
-          clipboardData: dataTransfer,
-        }))
-        const deadline = Date.now() + 4000
-        for (;;) {
-          if (before !== null) {
-            let size = null
-            try {
-              size = conversation?.draftAttachments?.size ?? null
-            } catch {}
-            if (size !== null && size >= before + files.length) return true
-          }
-          try {
-            if (domCount() >= domBefore + files.length) return true
-          } catch {}
-          if (Date.now() >= deadline) return false
-          await sleep(100)
-        }
-      }
-
-      async function submitPromptWhenReady(text, files = []) {
-        for (let i = 0; i < 40; i++) {
-          await sleep(120)
-          const composer = document.querySelector('div[data-composer-input], [data-composer-input], div[contenteditable="true"], div[contenteditable]')
-          if (!composer || !composer.isConnected) continue
-
-          try {
-            composer.focus()
-          } catch {}
-
-          if (files.length > 0) {
-            let staged = false
-            try {
-              staged = await stageFilesIntoComposer(composer, files)
-            } catch (err) {
-              console.warn('[dsh-turn-bookmarks] 附件注入作曲器失败:', err)
-            }
-            if (!staged) return false
-          }
-
-          try {
-            composer.innerHTML = ''
-            document.execCommand('insertText', false, text)
-            composer.dispatchEvent(new Event('input', { bubbles: true }))
-
-            await sleep(100)
-
-            const card = document.querySelector('[data-composer-card]') || composer.closest('[class*="card"]') || document
-            const sendBtn = card.querySelector('button[aria-label*="发送"], button[aria-label*="Send"], button[class*="primary"]:not(:disabled)')
-            if (sendBtn && !sendBtn.disabled) {
-              sendBtn.click()
-              return true
-            }
-
-            composer.dispatchEvent(new KeyboardEvent('keydown', {
-              key: 'Enter',
-              code: 'Enter',
-              keyCode: 13,
-              which: 13,
-              bubbles: true,
-              cancelable: true
-            }))
-            return true
-          } catch (err) {
-            console.warn('[dsh-turn-bookmarks] Auto-submit prompt error:', err)
-          }
-        }
-        return false
-      }
-      
 
       // ── Rail Marks Synchronizer (双轨架构联动) ─────────────────────────────
       function updateRailMarks() {

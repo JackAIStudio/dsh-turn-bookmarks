@@ -142,6 +142,8 @@ test('adapter-default effort is not treated as an explicit choice', () => {
   ]
   const projected = projectRerunContext(entries, 2)
   assert.deepEqual(projected.atTurn, { provider: 'deepseek', model: 'deepseek-v4-flash' })
+  // Reading a past turn keeps what that turn ran with, so the provider default
+  // is the right answer here. Only a fresh model pick escalates to the top tier.
   assert.deepEqual(normalizeEffort(groups, projected.atTurn), {
     provider: 'deepseek',
     model: 'deepseek-v4-flash',
@@ -173,12 +175,90 @@ test('changing model keeps a shared effort id and otherwise falls back to that m
   assert.equal(switched.reasoningEffort, 'extra-high')
 })
 
+test('a model without an advertised default starts on its strongest level, not the first entry', () => {
+  // Some providers publish levels but no default. The list starts at `off` and
+  // `low`, so taking the first entry silently answered with the least effort.
+  const noDefault = [{
+    id: 'workbuddy-cn',
+    name: 'WorkBuddy CN',
+    models: [{
+      id: 'deepseek-v4.1-flash',
+      name: 'Deepseek-V4.1-Flash',
+      reasoning: {
+        efforts: [
+          { id: 'off', name: 'Off' },
+          { id: 'low', name: 'Low' },
+          { id: 'medium', name: 'Medium' },
+          { id: 'high', name: 'High' },
+          { id: 'max', name: 'Max' },
+        ],
+      },
+    }],
+  }]
+  const selection = { provider: 'workbuddy-cn', model: 'deepseek-v4.1-flash' }
+  assert.equal(normalizeEffort(noDefault, selection).reasoningEffort, 'max')
+  assert.equal(api.withModel(noDefault, null, 'workbuddy-cn', 'deepseek-v4.1-flash').reasoningEffort, 'max')
+  assert.equal(api.restoreSelection(noDefault, { ...selection, reasoningEffort: 'ultra' }, null).reasoningEffort, 'max')
+  // withModel is the only place a switch escalates; a null default is the
+  // provider's own answer and must stay at the provider value.
+  assert.equal(
+    api.withModel(noDefault, { ...selection, reasoningEffort: 'low' }, 'workbuddy-cn', 'deepseek-v4.1-flash').reasoningEffort,
+    'low',
+  )
+  assert.equal(api.topEffort(noDefault[0].models[0]), 'max')
+  assert.equal(api.providerDefaultOf(noDefault[0].models[0]), 'max')
+  assert.equal(api.preferredEffortOf(noDefault[0].models[0]), 'max')
+})
+
+test('switching models ignores weak provider defaults and takes the strongest tier', () => {
+  // Providers commonly advertise `high` (or `medium`) as the default. Picking a
+  // model is a deliberate act, so the panel starts where the model is strongest.
+  const model = { provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEffort: 'high' }
+  assert.equal(api.withModel(groups, model, 'xai', 'grok-4.7-fast').reasoningEffort, 'extra-high')
+  assert.equal(api.preferredEffortOf(groups[0].models[0]), 'max')
+  const offOnly = [{ id: 'p', name: 'P', models: [{ id: 'm', name: 'M', reasoning: { efforts: [{ id: 'off', name: 'Off' }] } }] }]
+  assert.equal(api.topEffort(offOnly[0].models[0]), null)
+})
+
+test('the composer trigger label survives model names that carry a credits suffix', () => {
+  // `title` is `<name> · <effort>`; WorkBuddy names read
+  // `Deepseek-V4.1-Flash · x0.11`. Splitting on the first separator lost Max.
+  const workbuddy = [{
+    id: 'workbuddy-cn',
+    name: 'WorkBuddy CN',
+    models: [{
+      id: 'deepseek-v4.1-flash',
+      name: 'Deepseek-V4.1-Flash · x0.11',
+      reasoning: {
+        efforts: [
+          { id: 'low', name: 'Low' },
+          { id: 'high', name: 'High' },
+          { id: 'max', name: 'Max' },
+        ],
+      },
+    }],
+  }]
+  assert.deepEqual(api.parseComposerLabel(workbuddy, 'Deepseek-V4.1-Flash · x0.11 · Max'), {
+    provider: 'workbuddy-cn',
+    model: 'deepseek-v4.1-flash',
+    reasoningEffort: 'max',
+  })
+  assert.deepEqual(api.parseComposerLabel(groups, 'Grok 4.7 Fast · Extra High'), {
+    provider: 'xai',
+    model: 'grok-4.7-fast',
+    reasoningEffort: 'extra-high',
+  })
+  assert.equal(api.parseComposerLabel(groups, '未知名模型 · High'), null)
+})
+
 test('restoring the original turn brings back its own effort, not the composer effort', () => {
   const original = { provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEffort: 'high' }
   const restored = api.restoreSelection(groups, original, { provider: 'xai', model: 'grok-4.7-fast', reasoningEffort: 'extra-high' })
   assert.deepEqual(restored, original)
   assert.notEqual(restored, original, 'must return a copy, not the projected object')
   const withUnknownEffort = api.restoreSelection(groups, { provider: 'deepseek', model: 'deepseek-v4-flash', reasoningEffort: 'ultra' }, null)
+  // An effort this model does not advertise falls back to its provider default,
+  // never to the first list entry.
   assert.equal(withUnknownEffort.reasoningEffort, 'high')
 })
 
@@ -194,21 +274,16 @@ test('client.js carries the same selection rules as the tested module', () => {
   assert.equal(client.includes(block), true)
 })
 
-test('the client resolves remote.session as its own service, never off the remote proxy', () => {
+test('the branch flow leaves model, effort and permission to the official composer', () => {
   const client = readFileSync(join(here, '../client.js'), 'utf8')
-  // Regression: "cannot get property \"remote.session\" without inject".
-  // Cordis exposes remote.session as a separate service; property access on the
-  // remote namespace throws.
+  // 分支只负责把提示词和附件放回输入框。模型、思考程度、权限由官方输入框
+  // 自己的选择器决定，插件不再替用户切换或发送。
+  assert.equal(client.includes('selectModel'), false, 'branch flow must not switch models itself')
+  assert.equal(client.includes("'/permission '"), false, 'branch flow must not switch permissions itself')
+  assert.equal(client.includes('sendSession'), false, 'branch flow must not send the prompt for the user')
   assert.equal(
-    client.includes("ctx.get('remote.session')"),
+    client.includes('conversation.input?.shell?.(sessionId)'),
     true,
-    'selectModelOn must resolve remote.session through ctx.get',
+    'seeding must go through the official conversation input shell',
   )
-  const proxyAccess = /remote\s*&&\s*remote\.session|remote\.session\.selectModel/
-  const match = client.match(proxyAccess)
-  if (match) {
-    // A guarded fallback is allowed, but it must sit inside a try block.
-    const guarded = client.slice(Math.max(0, match.index - 200), match.index + 200)
-    assert.equal(guarded.includes('try {'), true, 'unguarded remote.session access will throw at runtime')
-  }
 })

@@ -13,6 +13,9 @@ const PERMISSION_LABELS = {
 
 const PERMISSION_OPTIONS = ['read-only', 'workspace-write', 'danger-full-access']
 
+/** Thinking levels in ascending effort; the last level a model offers is its strongest. */
+const EFFORT_ORDER = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
 function sameSelection(left, right) {
   if (left === right) return true
   if (left == null || right == null) return false
@@ -131,11 +134,53 @@ function findModel(groups, selection) {
   return null
 }
 
+/**
+ * Strongest thinking level a model advertises, or null when it has none.
+ *
+ * `off` is never the strongest choice, and a provider that names its tiers
+ * differently (for example `extra-high`) still has one top tier. Known levels
+ * rank by effort; an unrecognized tier ranks just above `high`, where the
+ * vendor-specific top tiers sit.
+ */
+function topEffort(model) {
+  const efforts = (model && model.reasoning && model.reasoning.efforts) || []
+  let top = null
+  let topRank = -2
+  for (const level of efforts) {
+    if (!level || typeof level.id !== 'string' || level.id === '' || level.id === 'off') continue
+    const known = EFFORT_ORDER.indexOf(level.id)
+    const rank = known === -1 ? EFFORT_ORDER.indexOf('high') + 0.5 : known
+    if (rank > topRank) {
+      topRank = rank
+      top = level.id
+    }
+  }
+  return top
+}
+
+/** Level the provider itself advertises as the model default. */
+function providerDefaultOf(model) {
+  const declared = model && model.reasoning && model.reasoning.defaultEffort
+  if (typeof declared === 'string' && declared !== '') return declared
+  return topEffort(model)
+}
+
+/**
+ * The level a fresh model pick starts on: the strongest one it offers.
+ *
+ * A provider without a published default used to fall through to the first
+ * list entry — `off` or `low`. Switching a model therefore answered with the
+ * weakest effort even when a Max tier existed.
+ */
+function preferredEffortOf(model) {
+  return topEffort(model) || providerDefaultOf(model)
+}
+
 function normalizeEffort(groups, selection) {
   const copy = cloneSelection(selection)
   if (!copy || copy.reasoningEffort) return copy
   const found = findModel(groups, copy)
-  const fallback = found && found.model && found.model.reasoning && found.model.reasoning.defaultEffort
+  const fallback = found && providerDefaultOf(found.model)
   if (typeof fallback === 'string' && fallback !== '') copy.reasoningEffort = fallback
   return copy
 }
@@ -148,7 +193,7 @@ function withModel(groups, selection, provider, modelId) {
   const previous = selection && selection.reasoningEffort
   const sameModel = !!(selection && selection.provider === provider && selection.model === modelId)
   const kept = sameModel && previous && efforts.some((level) => level && level.id === previous)
-  const fallback = found.model.reasoning.defaultEffort || (efforts[0] && efforts[0].id)
+  const fallback = preferredEffortOf(found.model)
   if (kept || fallback) next.reasoningEffort = kept ? previous : fallback
   return next
 }
@@ -169,10 +214,39 @@ function restoreSelection(groups, original, current) {
   const known = restored.reasoningEffort
     && efforts.some((level) => level && level.id === restored.reasoningEffort)
   if (!known) {
-    const fallback = found.model.reasoning.defaultEffort || (efforts[0] && efforts[0].id)
+    const fallback = providerDefaultOf(found.model)
     if (fallback) restored.reasoningEffort = fallback
   }
   return restored
+}
+
+/**
+ * Resolve the composer trigger's readable label back to its model and effort.
+ *
+ * `title` is `<model name> · <effort>`, and model names may themselves carry a
+ * ` · <credits>` suffix (WorkBuddy routes do). Splitting on every separator and
+ * comparing the first fragment misses exactly those models, so the longest
+ * advertised name that prefixes the label wins.
+ */
+function parseComposerLabel(groups, label) {
+  if (typeof label !== 'string' || label === '') return null
+  let match = null
+  for (const option of modelOptions(groups)) {
+    if (label !== option.name && !label.startsWith(option.name + ' · ')) continue
+    if (!match || option.name.length > match.name.length) match = option
+  }
+  if (!match) return null
+  const next = { provider: match.provider, model: match.model }
+  const rest = label === match.name ? '' : label.slice(match.name.length + 3)
+  const found = findModel(groups, next)
+  const levels = (found && found.model.reasoning && found.model.reasoning.efforts) || []
+  const level = rest && levels.find((item) => item && (item.name === rest || item.id === rest))
+  if (level) next.reasoningEffort = level.id
+  else if (rest === '') {
+    const fallback = providerDefaultOf(found && found.model)
+    if (fallback) next.reasoningEffort = fallback
+  }
+  return next
 }
 
 function effortName(model, effortId) {
@@ -293,6 +367,10 @@ const rerunSelectionApi = {
   decideChoice,
   decidePermission,
   findModel,
+  topEffort,
+  providerDefaultOf,
+  preferredEffortOf,
+  parseComposerLabel,
   normalizeEffort,
   withModel,
   restoreSelection,
