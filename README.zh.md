@@ -28,6 +28,16 @@ DSH Web GUI 原生 Turn Rail（轮次导航轨）深度赋能插件：**100% 融
 - **每轮结果旁标出实际使用的模型**：来自该轮的 `request/header`，重新打开会话也一致；它只是显示，不参与分支流程。
   - 客户端插件是宿主合包提供的，改完 `client.js` 需要**完全退出并重启应用**才会装载新代码；只刷新窗口仍会跑旧包。
 
+## 性能约束（2026-11-06 修复）
+
+原生轨的 `.mark` 按钮归 React 受控渲染。`tick` 每 500 ms 都会重算这些按钮的状态，而 `classList.add` / `classList.remove` / `dataset` 赋值**即便写入相同值，也会派发 mutation**，唤醒宿主的 MutationObserver，再排一轮 enhance —— 大会话里表现为渲染进程常驻 30–40% CPU、整窗发顿。因此这里的写入一律先比较再写：
+
+- `data-dsh-turn` 只在编号变化时写；
+- `dsh-tb-mark-starred` / `dsh-tb-pos-starred` / `dsh-tb-mark-matched` / `dsh-tb-mark-current-match` 用 `classList.contains` 比对后 `toggle`；
+- `.dsh-tb-turn-model` 的 `textContent` 与 `title` 仅在变化时写。
+
+新增任何周期性写 DOM 的代码，都要遵守同一条规则。
+
 ## 测试
 
 ```bash

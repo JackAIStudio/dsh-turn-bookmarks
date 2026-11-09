@@ -1513,8 +1513,11 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           if (actions && actions.parentElement) actions.parentElement.insertBefore(chip, actions)
           else row.appendChild(chip)
         }
-        chip.textContent = label
-        chip.title = '这一轮实际使用的模型和思考程度'
+        // 只在真的变化时写 DOM。这两个字段每 500 ms 都会重算一次，无条件赋值会让
+        // 自身的 MutationObserver 反复排下一轮 enhance，大会话里把渲染进程钉在 30-40% CPU。
+        if (chip.textContent !== label) chip.textContent = label
+        const tooltip = '这一轮实际使用的模型和思考程度'
+        if (chip.title !== tooltip) chip.title = tooltip
       }
 
       function injectMessageStarButtons() {
@@ -2015,9 +2018,9 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           const turn = parseTurnNumber(btn)
           if (turn === null) return
 
-          btn.dataset.dshTurn = String(turn)
+          if (btn.dataset.dshTurn !== String(turn)) btn.dataset.dshTurn = String(turn)
           const pos = btn.closest('[class*="markPosition"]')
-          if (pos) pos.dataset.dshTurn = String(turn)
+          if (pos && pos.dataset.dshTurn !== String(turn)) pos.dataset.dshTurn = String(turn)
 
           // Bind Popover & Click Actions
           if (!btn.dataset.dshTbBound) {
@@ -2057,12 +2060,14 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           }
 
           // 1. Starred status (右主轨：彻底瘦身，仅保留金色发光细线，坚决移除任何大胶囊与五角星)
-          if (starredTurns.has(turn)) {
-            btn.classList.add('dsh-tb-mark-starred')
-            if (pos) pos.classList.add('dsh-tb-pos-starred')
-          } else {
-            btn.classList.remove('dsh-tb-mark-starred')
-            if (pos) pos.classList.remove('dsh-tb-pos-starred')
+          // classList.add/remove 即使是「已是该状态」也会派发 mutation 并触发宿主重渲染，
+          // 而这里跑在 500 ms 的 tick 里：必须只在状态真的翻转时写。
+          const starred = starredTurns.has(turn)
+          if (btn.classList.contains('dsh-tb-mark-starred') !== starred) {
+            btn.classList.toggle('dsh-tb-mark-starred', starred)
+          }
+          if (pos && pos.classList.contains('dsh-tb-pos-starred') !== starred) {
+            pos.classList.toggle('dsh-tb-pos-starred', starred)
           }
           // 彻底清理任何残留在右侧的旧标签
           pos?.querySelector('.dsh-tb-bookmark-chip')?.remove()
@@ -2073,16 +2078,11 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           const activeTurn = activeMarkEl ? parseInt(activeMarkEl.dataset.dshTurn || '', 10) : null
           const isCurrent = isMatch && Number.isSafeInteger(activeTurn) && activeTurn === turn
 
-          if (isMatch) {
-            btn.classList.add('dsh-tb-mark-matched')
-          } else {
-            btn.classList.remove('dsh-tb-mark-matched')
+          if (btn.classList.contains('dsh-tb-mark-matched') !== isMatch) {
+            btn.classList.toggle('dsh-tb-mark-matched', isMatch)
           }
-
-          if (isCurrent) {
-            btn.classList.add('dsh-tb-mark-current-match')
-          } else {
-            btn.classList.remove('dsh-tb-mark-current-match')
+          if (btn.classList.contains('dsh-tb-mark-current-match') !== isCurrent) {
+            btn.classList.toggle('dsh-tb-mark-current-match', isCurrent)
           }
         })
       }
@@ -2682,7 +2682,9 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       function renderControlBarState() {
         if (!barEl) ensureControlBar()
 
-        barEl.classList.toggle('is-expanded', searchExpanded)
+        if (barEl.classList.contains('is-expanded') !== searchExpanded) {
+          barEl.classList.toggle('is-expanded', searchExpanded)
+        }
 
         // Counter text
         if (counterEl) {
@@ -2694,10 +2696,10 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
               counterEl.textContent = '无匹配'
               counterEl.title = '当前会话中未找到匹配内容'
             }
-            counterEl.style.display = 'inline'
+            if (counterEl.style.display !== 'inline') counterEl.style.display = 'inline'
           } else {
-            counterEl.textContent = ''
-            counterEl.style.display = 'none'
+            if (counterEl.textContent) counterEl.textContent = ''
+            if (counterEl.style.display !== 'none') counterEl.style.display = 'none'
           }
         }
       }
