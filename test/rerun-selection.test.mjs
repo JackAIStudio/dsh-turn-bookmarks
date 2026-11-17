@@ -274,11 +274,10 @@ test('client.js carries the same selection rules as the tested module', () => {
   assert.equal(client.includes(block), true)
 })
 
-test('the branch flow leaves model, effort and permission to the official composer', () => {
+test('branch initialization keeps the global picker, permissions and prompt submission user-owned', () => {
   const client = readFileSync(join(here, '../client.js'), 'utf8')
-  // 分支只负责把提示词和附件放回输入框。模型、思考程度、权限由官方输入框
-  // 自己的选择器决定，插件不再替用户切换或发送。
-  assert.equal(client.includes('selectModel'), false, 'branch flow must not switch models itself')
+  // 官方 selectModel 同时保存全局默认值；分支继承只应作用于子会话。
+  assert.equal(client.includes('selectModel'), false, 'branch flow must not change the global model default')
   assert.equal(client.includes("'/permission '"), false, 'branch flow must not switch permissions itself')
   assert.equal(client.includes('sendSession'), false, 'branch flow must not send the prompt for the user')
   assert.equal(

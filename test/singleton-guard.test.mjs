@@ -56,17 +56,19 @@ function runGuard(source, window, document) {
 test('同一页面重复执行 apply 会停掉旧实例并封掉残留搜索框', () => {
   const staleBar = makeBar()
   const stalePopover = makeBar('dsh-tb-popover')
+  const staleEdit = makeBar('dsh-tb-msg-edit')
   let oldDisposed = 0
   const oldInstance = { dispose: () => { oldDisposed += 1 } }
 
   const window = { [INSTANCE_KEY]: [oldInstance] }
-  const document = makeDom([staleBar, stalePopover])
+  const document = makeDom([staleBar, stalePopover, staleEdit])
 
   runGuard(src, window, document)
 
   assert.equal(oldDisposed, 1, '旧实例必须被 dispose')
   assert.equal(staleBar.getAttribute('data-dsh-tb-stale'), '1', '旧搜索框必须被标记为隐藏')
   assert.equal(stalePopover.removed, true, '旧悬浮层必须被移除')
+  assert.equal(staleEdit.removed, true, '旧铅笔必须解绑旧版分支逻辑')
   assert.equal(window[INSTANCE_KEY].length, 1, '注册表里只应留下新实例')
 })
 

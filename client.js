@@ -1082,7 +1082,8 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       document.querySelectorAll('.dsh-tb-search-container, .dsh-tb-bar').forEach((el) => {
         el.setAttribute('data-dsh-tb-stale', '1')
       })
-      document.querySelectorAll('.dsh-tb-popover, .dsh-tb-left-rail').forEach((el) => el.remove())
+      // 旧铅笔的点击回调绑定着上一版的分支逻辑。
+      document.querySelectorAll('.dsh-tb-popover, .dsh-tb-left-rail, .dsh-tb-msg-edit').forEach((el) => el.remove())
 
       // 新实例一挂载就登记；之后被更新的实例取代时，本实例的 tick 会自行退场。
       const instance = { dispose: null }
@@ -1571,7 +1572,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
             const editBtn = document.createElement('button')
             editBtn.className = 'dsh-tb-msg-edit'
             editBtn.type = 'button'
-            editBtn.title = `从第 ${turn} 轮分支：提示词和附件带进新会话，由你决定怎么发`
+            editBtn.title = `从第 ${turn} 轮分支，沿用这一轮的模型和思考档位，编辑后发送`
             editBtn.setAttribute('aria-label', editBtn.title)
             editBtn.innerHTML = `
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -1607,25 +1608,30 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         button.setAttribute('aria-label', '正在创建分支…')
         button.classList.add('dsh-tb-msg-edit-busy')
         try {
-          const content = await resolveTurnContent(turn, userBubble)
+          const sourceId = getSessionIdFromEnvironment(sessionsRef, activeSessionId)
+          if (!sourceId || sourceId === 'default') throw new Error('未找到当前会话')
+          const content = await resolveTurnContent(sourceId, turn, userBubble)
           const promptText = content && typeof content.text === 'string' ? content.text : ''
           const attachments = content && Array.isArray(content.attachments) ? content.attachments : []
 
           let files = []
           let failed = []
           if (attachments.length > 0) {
-            const collected = await collectCarriedFiles(attachments)
+            const collected = await collectCarriedFiles(sourceId, attachments)
             files = collected.files
             failed = collected.failed
           }
 
-          const { seeded } = await forkAndSeedTurn(turn, promptText, files)
+          const { seeded, modelError } = await forkAndSeedTurn(sourceId, turn, promptText, files)
+          const warnings = []
+          if (modelError) warnings.push('原轮次的模型或思考档位未能恢复，请在发送前重新选择。' + modelError)
           if (failed.length > 0) {
             const names = failed
               .map((item) => item.name || (item.kind === 'image' ? '图片' : '附件'))
               .join('、')
-            window.alert(`新会话已打开，提示词和 ${seeded.attached} 个附件已放进输入框。\n有 ${failed.length} 个附件读不出来，需要你手动补上：${names}`)
+            warnings.push(`有 ${failed.length} 个附件读不出来，需要你手动补上：${names}`)
           }
+          if (warnings.length) window.alert([`新会话已打开，提示词和 ${seeded.attached} 个附件已放进输入框。`, ...warnings].join('\n'))
         } catch (err) {
           console.error('[dsh-turn-bookmarks] Fork into new session failed:', err)
           window.alert('没能把这一轮带到新会话：' + (err && err.message ? err.message : String(err)))
@@ -1661,9 +1667,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
        * 顺序：客户端内存 → 宿主 /turn-content → DOM 属性兜底。
        * @returns {Promise<{ text: string, attachments: Array<object> }>}
        */
-      async function resolveTurnContent(turn, userBubble) {
-        const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
-
+      async function resolveTurnContent(currentSessionId, turn, userBubble) {
         // 1. 本地内存优先：直接从客户端 session 的 eventSource 提取完整内容
         try {
           const sessionObj = sessionsRef?.binding?.(currentSessionId)?.session
@@ -1846,8 +1850,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       }
 
       /** 读全部携带附件；读不出来的单独交回调用方决定。 */
-      async function collectCarriedFiles(items) {
-        const sessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
+      async function collectCarriedFiles(sessionId, items) {
         const files = []
         const failed = []
         for (const item of items) {
@@ -1933,14 +1936,9 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
       /**
        * 从某一轮之前分叉，并把这一轮的提示词 + 附件预填进新会话输入框。
        *
-       * 模型、思考程度、权限一律交给官方输入框自己的选择器，这里不碰。
+       * 在打开输入框之前，将源轮次的模型与思考档位写入分支。
        */
-      async function forkAndSeedTurn(turn, promptText, files) {
-        const currentSessionId = activeSessionId || getSessionIdFromEnvironment(sessionsRef)
-        if (!currentSessionId || currentSessionId === 'default') {
-          throw new Error('未找到当前活跃会话 ID')
-        }
-
+      async function forkAndSeedTurn(currentSessionId, turn, promptText, files) {
         // 1. 本地优先：直接从内存中的 session 事件流精准提取截断点
         let atSeq = undefined
         try {
@@ -1998,6 +1996,19 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
         })
         if (!childId) throw new Error('分叉会话未返回有效 ID')
 
+        let modelError = ''
+        try {
+          const response = await fetch('/api/dsh-turn-bookmarks/restore-branch-model', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sourceId: currentSessionId, childId, turn }),
+          })
+          const result = await response.json()
+          if (!response.ok || result.ok !== true) throw new Error(result.error || '分支模型设置失败')
+        } catch (error) {
+          modelError = error.message || String(error)
+        }
+
         const uiWorkspace = ctx.get('uiWorkspace')
         if (uiWorkspace && typeof uiWorkspace.openSession === 'function') {
           uiWorkspace.openSession(childId)
@@ -2005,7 +2016,7 @@ html.dark mark.dsh-tb-kw.dsh-tb-kw-active {
           sessionsRef.select(childId)
         }
 
-        return { childId, seeded: await seedChildDraft(childId, promptText, files) }
+        return { childId, modelError, seeded: await seedChildDraft(childId, promptText, files) }
       }
 
       // ── Rail Marks Synchronizer (双轨架构联动) ─────────────────────────────

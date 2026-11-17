@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import readline from 'node:readline'
+import rerunSelection from './rerun-selection.cjs'
 
 export const name = 'dsh-turn-bookmarks'
 export const inject = ['webServer']
@@ -391,12 +392,51 @@ export function apply(ctx) {
 
   if (!webServer) return
 
+  ctx.inject(['connection', 'sessionQuery', 'agents', 'llm', 'agentDefaultModel'], (host) => {
+    host.connection.fetch.register({
+      path: '/api/dsh-turn-bookmarks/restore-branch-model',
+      methods: ['POST'],
+      async fetch(request) {
+        const { sourceId, childId, turn } = await request.json().catch(() => null) ?? {}
+        if (typeof sourceId !== 'string' || !sourceId || typeof childId !== 'string' || !childId || sourceId === childId ||
+            !Number.isSafeInteger(turn) || turn < 1) {
+          return Response.json({ error: '分支会话或轮次无效' }, { status: 400 })
+        }
+        try {
+          const source = await host.sessionQuery.observeSession(sourceId, { signal: request.signal })
+          let selection
+          try {
+            selection = rerunSelection.projectRerunContext(source.events, turn).atTurn
+          } finally {
+            source[Symbol.dispose]()
+          }
+          // 第一轮在模型请求前中断时，历史里可能还没有模型记录。
+          selection ??= host.agentDefaultModel.currentSelection()
+          await host.llm.resolveCallConfig(selection, request.signal)
+
+          const child = host.agents.get(childId)
+          if (!child?.session.header.isSeeded) {
+            return Response.json({ error: '找不到新建的分支会话' }, { status: 409 })
+          }
+          // 只初始化空分支。重复请求或另一个窗口的手动选择均以已写入的设置为准。
+          const ownEvents = child.session.snapshotEvents(child.session.inheritedEventCount)
+          const edited = ownEvents.some(event => event.type === 'model/selection' || event.type === 'turn/start' ||
+            (event.type === 'agent/inbox/spliced' && event.data?.inserted?.length > 0))
+          if (!edited) child.model.select(selection)
+          return Response.json({ ok: true })
+        } catch (error) {
+          return Response.json({ error: error.message }, { status: 422 })
+        }
+      },
+    })
+  })
+
   // 1. Info endpoint
   ctx.effect(() => webServer.register({
     kind: 'exact',
     path: '/dsh-turn-bookmarks/info',
     handler: (req, res) => {
-      sendJson(res, 200, { ok: true, name: 'dsh-turn-bookmarks', version: '0.1.0' })
+      sendJson(res, 200, { ok: true, name: 'dsh-turn-bookmarks', version: '0.1.3' })
     },
   }), 'dsh-turn-bookmarks: info')
 

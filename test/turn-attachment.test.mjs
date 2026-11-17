@@ -93,6 +93,7 @@ function collectRoutes() {
   }
   const ctx = {
     get: (name) => (name === 'webServer' ? webServer : undefined),
+    inject() {}, // 此运行台只提供 webServer
     effect: (fn) => {
       const dispose = fn()
       return typeof dispose === 'function' ? dispose : () => {}
